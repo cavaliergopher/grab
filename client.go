@@ -139,7 +139,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 		if req.Size == 0 && hresp.ContentLength > 0 {
 			resp.Size = uint64(hresp.ContentLength)
 		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
-			return resp, resp.close(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size))
+			return resp, resp.close(newGrabError(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size))
 		}
 
 		// does server supports resuming downloads?
@@ -157,7 +157,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 	if needFilename {
 		filename := path.Base(req.HTTPRequest.URL.Path)
 		if filename == "" {
-			return resp, resp.close(errorf(errNoFilename, "No filename could be determined"))
+			return resp, resp.close(newGrabError(errNoFilename, "No filename could be determined"))
 		} else {
 			// update filepath with filename from URL
 			resp.Filename = filepath.Join(req.Filename, filename)
@@ -211,7 +211,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 		// validate content length
 		if resp.Size > 0 && resp.Size != (resp.bytesTransferred+uint64(hresp.ContentLength)) {
-			return resp, resp.close(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
+			return resp, resp.close(newGrabError(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
 		}
 	}
 
