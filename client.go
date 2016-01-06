@@ -11,15 +11,14 @@ import (
 )
 
 type Client struct {
-	client *http.Client
-
-	userAgent string
+	HTTPClient *http.Client
+	UserAgent  string
 }
 
 func NewClient(userAgent string) *Client {
 	return &Client{
-		userAgent: userAgent,
-		client: &http.Client{
+		UserAgent: userAgent,
+		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
 			},
@@ -27,75 +26,83 @@ func NewClient(userAgent string) *Client {
 	}
 }
 
-func (c *Client) SetHTTPClient(client *http.Client) {
-	c.client = client
-}
-
-func (c *Client) Do(d *Download) error {
+func (c *Client) Do(req *Request) error {
+	// create a response
+	resp := Response{
+		Request: req,
+	}
 
 	// default to current working directory
-	if d.filepath == "" {
-		d.filepath = "."
+	if req.Filename == "" {
+		req.Filename = "."
 	}
 
 	// see if file is a directory
 	needFilename := false
-	if fi, err := os.Stat(d.filepath); err != nil {
-		return err
-	} else {
+	if fi, err := os.Stat(req.Filename); err == nil {
+		// file exists - is it a directory?
 		if fi.IsDir() {
 			// destination is a directory - compute a file name
 			needFilename = true
 		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
-	// configure client request
-	if c.userAgent != "" {
-		d.req.Header.Set("User-Agent", c.userAgent)
+	if !needFilename {
+		resp.Filename = req.Filename
+	}
+
+	// set user agent string
+	if c.UserAgent != "" && req.HTTPRequest.Header.Get("User-Agent") == "" {
+		req.HTTPRequest.Header.Set("User-Agent", c.UserAgent)
 	}
 
 	// switch the request to HEAD metho
-	method := d.req.Method
-	d.req.Method = "HEAD"
+	method := req.HTTPRequest.Method
+	req.HTTPRequest.Method = "HEAD"
 
 	// get file metadata
 	canResume := false
-	if resp, err := c.client.Do(d.req); err == nil && (resp.StatusCode >= 200 && resp.StatusCode < 300) {
-		// update or validate content length
-		if d.size == 0 && resp.ContentLength > 0 {
-			d.size = uint64(resp.ContentLength)
-		} else if d.size > 0 && resp.ContentLength > 0 && d.size != uint64(resp.ContentLength) {
-			return errorf(errBadLength, "Bad content length: %d, expected %d", resp.ContentLength, d.size)
+	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err == nil && (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
+		// is a known size set and a size returned in the HEAd request?
+		if req.Size == 0 && hresp.ContentLength > 0 {
+			resp.Size = uint64(hresp.ContentLength)
+		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
+			return errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size)
 		}
 
 		// does server supports resuming downloads?
-		if resp.Header.Get("Accept-Ranges") == "bytes" {
+		if hresp.Header.Get("Accept-Ranges") == "bytes" {
 			canResume = true
 		}
 
 		// TODO: get filename from Content-Disposition header
 	}
 
+	// reset request
+	req.HTTPRequest.Method = method
+
 	// compute filename from URL if still needed
 	if needFilename {
-		filename := path.Base(d.url.Path)
+		filename := path.Base(req.HTTPRequest.URL.Path)
 		if filename == "" {
 			return errorf(errNoFilename, "No filename could be determined")
 		} else {
 			// update filepath with filename from URL
-			d.filepath = filepath.Join(d.filepath, filename)
+			resp.Filename = filepath.Join(req.Filename, filename)
 		}
 	}
 
 	// open destination for writing
-	f, err := os.OpenFile(d.filepath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	f, err := os.OpenFile(resp.Filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
 	// seek to the start of the file
-	d.progress = 0
+	resp.progress = 0
 	if _, err := f.Seek(0, 0); err != nil {
 		return err
 	}
@@ -109,51 +116,50 @@ func (c *Client) Do(d *Download) error {
 			if _, err = f.Seek(0, os.SEEK_END); err != nil {
 				return err
 			} else {
-				d.progress = uint64(fi.Size())
+				resp.progress = uint64(fi.Size())
 
 				// set byte range header in next request
-				d.req.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
+				req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
 			}
 		}
 	}
 
 	// skip if already downloaded
-	if d.size > 0 && d.size == d.progress {
+	if resp.Size > 0 && resp.Size == resp.progress {
 		return nil
 	}
 
-	// reset request and get file content
-	d.req.Method = method
-	resp, err := c.client.Do(d.req)
-	if err != nil {
+	// request content
+	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
 		return err
-	}
+	} else {
 
-	// validate content length
-	if d.size > 0 && d.size != (d.progress+uint64(resp.ContentLength)) {
-		return errorf(errBadLength, "Bad content length: %d, expected %d", resp.ContentLength, d.size-d.progress)
-	}
-
-	// download and update progress
-	var buffer [4096]byte
-	for {
-		// read HTTP stream
-		n, err := resp.Body.Read(buffer[:])
-		if err != nil && err != io.EOF {
-			return err
+		// validate content length
+		if resp.Size > 0 && resp.Size != (resp.progress+uint64(hresp.ContentLength)) {
+			return errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.progress)
 		}
 
-		// increment progress
-		atomic.AddUint64(&d.progress, uint64(n))
+		// download and update progress
+		var buffer [4096]byte
+		for {
+			// read HTTP stream
+			n, err := hresp.Body.Read(buffer[:])
+			if err != nil && err != io.EOF {
+				return err
+			}
 
-		// write to file
-		if _, werr := f.Write(buffer[:n]); werr != nil {
-			return werr
-		}
+			// increment progress
+			atomic.AddUint64(&resp.progress, uint64(n))
 
-		// break when finished
-		if err == io.EOF {
-			break
+			// write to file
+			if _, werr := f.Write(buffer[:n]); werr != nil {
+				return werr
+			}
+
+			// break when finished
+			if err == io.EOF {
+				break
+			}
 		}
 	}
 

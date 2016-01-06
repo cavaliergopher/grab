@@ -9,12 +9,14 @@ func TestClient_do(t *testing.T) {
 
 	client := NewClient("grab test")
 
-	d, err := NewDownload(".", url, 0, nil, nil)
+	req, err := NewRequest(url)
 	if err != nil {
 		t.Fatalf("Error initializing download: %v", err)
 	}
 
-	if err := client.Do(d); err != nil {
+	req.Filename = "./test"
+
+	if err := client.Do(req); err != nil {
 		t.Fatalf("Error with download: %v", err)
 	}
 }
