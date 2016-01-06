@@ -2,7 +2,6 @@ package grab
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path"
@@ -49,14 +48,16 @@ var DefaultClient = NewClient()
 // if there was an HTTP protocol error.
 func (c *Client) Do(req *Request) (*Response, error) {
 	// prepare request with HEAD request
-	resp, err := c.prepare(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return resp, err
 	}
 
 	// transfer content
-	if err := c.transfer(req, resp); err != nil {
-		return resp, err
+	if !resp.IsComplete() {
+		if err := resp.copy(); err != nil {
+			return resp, err
+		}
 	}
 
 	return resp, nil
@@ -77,23 +78,26 @@ func (c *Client) Do(req *Request) (*Response, error) {
 // set on the returned Response at the time which it occurs.
 func (c *Client) DoAsync(req *Request) (*Response, error) {
 	// prepare request with HEAD request
-	resp, err := c.prepare(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return resp, err
 	}
 
-	// transfer content
-	go c.transfer(req, resp)
+	// transfer content in new go-routine
+	if !resp.IsComplete() {
+		go resp.copy()
+	}
 
 	return resp, nil
 }
 
 // prepare creates a Response context for the given request using a HTTP HEAD
 // request to the remote server.
-func (c *Client) prepare(req *Request) (*Response, error) {
+func (c *Client) do(req *Request) (*Response, error) {
 	// create a response
 	resp := &Response{
 		Request: req,
+		Start:   time.Now(),
 	}
 
 	// default to current working directory
@@ -110,7 +114,7 @@ func (c *Client) prepare(req *Request) (*Response, error) {
 			needFilename = true
 		}
 	} else if !os.IsNotExist(err) {
-		return nil, err
+		return resp, resp.close(err)
 	}
 
 	if !needFilename {
@@ -128,11 +132,14 @@ func (c *Client) prepare(req *Request) (*Response, error) {
 
 	// get file metadata
 	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err == nil && (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
+		// allow caller to see response if error occurs before final transfer
+		resp.HTTPResponse = hresp
+
 		// is a known size set and a size returned in the HEAD request?
 		if req.Size == 0 && hresp.ContentLength > 0 {
 			resp.Size = uint64(hresp.ContentLength)
 		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
-			return nil, errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size)
+			return resp, resp.close(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size))
 		}
 
 		// does server supports resuming downloads?
@@ -150,42 +157,35 @@ func (c *Client) prepare(req *Request) (*Response, error) {
 	if needFilename {
 		filename := path.Base(req.HTTPRequest.URL.Path)
 		if filename == "" {
-			return nil, errorf(errNoFilename, "No filename could be determined")
+			return resp, resp.close(errorf(errNoFilename, "No filename could be determined"))
 		} else {
 			// update filepath with filename from URL
 			resp.Filename = filepath.Join(req.Filename, filename)
 		}
 	}
 
-	return resp, nil
-}
-
-// transfer initiates a file transfer for a prepared Response context.
-func (c *Client) transfer(req *Request, resp *Response) error {
-	// start timer - duration includes file seeking and HEAD request
-	resp.Start = time.Now()
-
 	// open destination for writing
 	f, err := os.OpenFile(resp.Filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
-		return resp.setError(err)
+		return resp, resp.close(err)
 	}
+	resp.writer = f
 
 	// seek to the start of the file
 	resp.bytesTransferred = 0
 	if _, err := f.Seek(0, 0); err != nil {
-		return resp.setError(err)
+		return resp, resp.close(err)
 	}
 
 	// attempt to resume previous download (if any)
 	if resp.canResume {
 		if fi, err := f.Stat(); err != nil {
 			resp.Error = err
-			return resp.setError(err)
+			return resp, resp.close(err)
 		} else if fi.Size() > 0 {
 			// seek to end of file
 			if _, err = f.Seek(0, os.SEEK_END); err != nil {
-				return resp.setError(err)
+				return resp, resp.close(err)
 			} else {
 				atomic.AddUint64(&resp.bytesTransferred, uint64(fi.Size()))
 
@@ -197,45 +197,24 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 
 	// skip if already downloaded
 	if resp.Size > 0 && resp.Size == resp.bytesTransferred {
-		return nil
+		return resp, resp.close(nil)
 	}
 
 	// request content
 	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
-		return resp.setError(err)
+		return resp, resp.close(err)
 	} else {
-		// TODO: Validate response code
+		// set HTTP response in transfer context
+		resp.HTTPResponse = hresp
+
+		// TODO: Validate HTTP response codes
 
 		// validate content length
 		if resp.Size > 0 && resp.Size != (resp.bytesTransferred+uint64(hresp.ContentLength)) {
-			return resp.setError(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
-		}
-
-		// download and update progress
-		var buffer [4096]byte
-		for {
-			// read HTTP stream
-			n, err := hresp.Body.Read(buffer[:])
-			if err != nil && err != io.EOF {
-				return resp.setError(err)
-			}
-
-			// increment progress
-			atomic.AddUint64(&resp.bytesTransferred, uint64(n))
-
-			// write to file
-			if _, werr := f.Write(buffer[:n]); werr != nil {
-				return resp.setError(werr)
-			}
-
-			// break when finished
-			if err == io.EOF {
-				break
-			}
+			return resp, resp.close(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
 		}
 	}
 
-	resp.End = time.Now()
-
-	return nil
+	// response context is ready to start transfer with resp.copy()
+	return resp, nil
 }

@@ -1,6 +1,7 @@
 package grab
 
 import (
+	"io"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,10 @@ type Response struct {
 	// End specifies the time at which the file transfer completed.
 	End time.Time
 
+	// writer is the file handle used to write the downloaded file to local
+	// storage
+	writer io.WriteCloser
+
 	// bytesTransferred specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
 	bytesTransferred uint64
@@ -68,10 +73,54 @@ func (c *Response) Progress() float64 {
 	return float64(atomic.LoadUint64(&c.bytesTransferred)) / float64(c.Size)
 }
 
-// setError sets the response context error if any was encountered during
-// transfer.
-func (c *Response) setError(err error) error {
+func (c *Response) copy() error {
+	// close writer when finished
+	defer c.writer.Close()
+
+	// download and update progress
+	var buffer [4096]byte
+	for {
+		// read HTTP stream
+		n, err := c.HTTPResponse.Body.Read(buffer[:])
+		if err != nil && err != io.EOF {
+			return c.close(err)
+		}
+
+		// increment progress
+		atomic.AddUint64(&c.bytesTransferred, uint64(n))
+
+		// write to file
+		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
+			return c.close(werr)
+		}
+
+		// break when finished
+		if err == io.EOF {
+			break
+		}
+	}
+
+	return c.close(nil)
+}
+
+func (c *Response) close(err error) error {
+	// close any file handle
+	if c.writer != nil {
+		c.writer.Close()
+		c.writer = nil
+	}
+
+	// set result error (if any)
 	c.Error = err
+
+	// stop time
 	c.End = time.Now()
+
+	// signal
+	if c.Request != nil && c.Request.SuccessNotify != nil {
+		c.Request.SuccessNotify <- (err == nil)
+	}
+
+	// pass error back
 	return err
 }
