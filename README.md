@@ -1,4 +1,4 @@
-# grab [![Build Status](https://travis-ci.org/cavaliercoder/grab.svg)](https://travis-ci.org/cavaliercoder/grab)[![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab)
+# grab [![Build Status](https://travis-ci.org/cavaliercoder/grab.svg)](https://travis-ci.org/cavaliercoder/grab) [![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab)
 
 __Downloading the internet, one go routine at a time!__
 
