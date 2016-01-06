@@ -14,9 +14,7 @@ func TestClient_do(t *testing.T) {
 		t.Fatalf("Error initializing download: %v", err)
 	}
 
-	req.Filename = "./test"
-
-	if err := client.Do(req); err != nil {
+	if _, err := client.Do(req); err != nil {
 		t.Fatalf("Error with download: %v", err)
 	}
 }

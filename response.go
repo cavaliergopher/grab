@@ -21,9 +21,17 @@ type Response struct {
 	// Size specifies the total size of the file transfer.
 	Size uint64
 
+	// Error specifies any error that may have occurred during the file transfer
+	// that created this response.
+	Error error
+
 	// progress specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
 	progress uint64
+
+	// canResume specifies whether the server support ranged transfers for
+	// resuming previous transfers.
+	canResume bool
 }
 
 // Progress returns the number of bytes which have already been downloaded.
@@ -39,4 +47,9 @@ func (c *Response) ProgressRatio() float64 {
 	}
 
 	return float64(atomic.LoadUint64(&c.progress)) / float64(c.Size)
+}
+
+func (c *Response) setError(err error) error {
+	c.Error = err
+	return err
 }

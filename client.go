@@ -10,14 +10,20 @@ import (
 	"sync/atomic"
 )
 
+// A Client is an HTTP file transfer client. Its zero value is a usable client
+// that uses http.Client defaults.
+//
+// Clients are safe for concurrent use by multiple goroutines.
 type Client struct {
 	HTTPClient *http.Client
 	UserAgent  string
 }
 
-func NewClient(userAgent string) *Client {
+// NewClient returns a new file transfer Client, using default transport
+// configuration.
+func NewClient() *Client {
 	return &Client{
-		UserAgent: userAgent,
+		UserAgent: "grab",
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
@@ -26,9 +32,32 @@ func NewClient(userAgent string) *Client {
 	}
 }
 
-func (c *Client) Do(req *Request) error {
+// Do sends a file transfer request and returns a file transfer response
+// context, following policy (e.g. redirects, cookies, auth) as configured on
+// the client's HTTPClient.
+//
+// An error is returned if caused by client policy (such as CheckRedirect), or
+// if there was an HTTP protocol error.
+func (c *Client) Do(req *Request) (*Response, error) {
+	// prepare request with HEAD request
+	resp, err := c.prepare(req)
+	if err != nil {
+		return resp, err
+	}
+
+	// transfer content
+	if err := c.transfer(req, resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
+}
+
+// prepare creates a Response context for the given request using a HTTP HEAD
+// request to the remote server.
+func (c *Client) prepare(req *Request) (*Response, error) {
 	// create a response
-	resp := Response{
+	resp := &Response{
 		Request: req,
 	}
 
@@ -46,7 +75,7 @@ func (c *Client) Do(req *Request) error {
 			needFilename = true
 		}
 	} else if !os.IsNotExist(err) {
-		return err
+		return nil, err
 	}
 
 	if !needFilename {
@@ -58,23 +87,22 @@ func (c *Client) Do(req *Request) error {
 		req.HTTPRequest.Header.Set("User-Agent", c.UserAgent)
 	}
 
-	// switch the request to HEAD metho
+	// switch the request to HEAD method
 	method := req.HTTPRequest.Method
 	req.HTTPRequest.Method = "HEAD"
 
 	// get file metadata
-	canResume := false
 	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err == nil && (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
 		// is a known size set and a size returned in the HEAd request?
 		if req.Size == 0 && hresp.ContentLength > 0 {
 			resp.Size = uint64(hresp.ContentLength)
 		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
-			return errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size)
+			return nil, errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size)
 		}
 
 		// does server supports resuming downloads?
 		if hresp.Header.Get("Accept-Ranges") == "bytes" {
-			canResume = true
+			resp.canResume = true
 		}
 
 		// TODO: get filename from Content-Disposition header
@@ -87,36 +115,41 @@ func (c *Client) Do(req *Request) error {
 	if needFilename {
 		filename := path.Base(req.HTTPRequest.URL.Path)
 		if filename == "" {
-			return errorf(errNoFilename, "No filename could be determined")
+			return nil, errorf(errNoFilename, "No filename could be determined")
 		} else {
 			// update filepath with filename from URL
 			resp.Filename = filepath.Join(req.Filename, filename)
 		}
 	}
 
+	return resp, nil
+}
+
+// transfer initiates a file transfer for a prepared Response context.
+func (c *Client) transfer(req *Request, resp *Response) error {
 	// open destination for writing
 	f, err := os.OpenFile(resp.Filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
-		return err
+		return resp.setError(err)
 	}
-	defer f.Close()
 
 	// seek to the start of the file
 	resp.progress = 0
 	if _, err := f.Seek(0, 0); err != nil {
-		return err
+		return resp.setError(err)
 	}
 
 	// attempt to resume previous download (if any)
-	if canResume {
+	if resp.canResume {
 		if fi, err := f.Stat(); err != nil {
-			return err
+			resp.Error = err
+			return resp.setError(err)
 		} else if fi.Size() > 0 {
 			// seek to end of file
 			if _, err = f.Seek(0, os.SEEK_END); err != nil {
-				return err
+				return resp.setError(err)
 			} else {
-				resp.progress = uint64(fi.Size())
+				atomic.AddUint64(&resp.progress, uint64(fi.Size()))
 
 				// set byte range header in next request
 				req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
@@ -131,12 +164,13 @@ func (c *Client) Do(req *Request) error {
 
 	// request content
 	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
-		return err
+		return resp.setError(err)
 	} else {
+		// TODO: Validate response code
 
 		// validate content length
 		if resp.Size > 0 && resp.Size != (resp.progress+uint64(hresp.ContentLength)) {
-			return errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.progress)
+			return resp.setError(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.progress))
 		}
 
 		// download and update progress
@@ -145,7 +179,7 @@ func (c *Client) Do(req *Request) error {
 			// read HTTP stream
 			n, err := hresp.Body.Read(buffer[:])
 			if err != nil && err != io.EOF {
-				return err
+				return resp.setError(err)
 			}
 
 			// increment progress
@@ -153,7 +187,7 @@ func (c *Client) Do(req *Request) error {
 
 			// write to file
 			if _, werr := f.Write(buffer[:n]); werr != nil {
-				return werr
+				return resp.setError(werr)
 			}
 
 			// break when finished
