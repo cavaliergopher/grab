@@ -1,8 +1,11 @@
 package grab
 
 import (
+	"bytes"
+	"encoding/hex"
 	"io"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 )
@@ -100,6 +103,27 @@ func (c *Response) copy() error {
 		}
 	}
 
+	// validate checksum
+	if c.Request.Hash != nil && c.Request.Checksum != nil {
+		// open downloaded file
+		if f, err := os.Open(c.Filename); err != nil {
+			return c.close(err)
+		} else {
+			defer f.Close()
+
+			// hash file
+			if _, err := io.Copy(c.Request.Hash, f); err != nil {
+				return c.close(err)
+			}
+
+			// checksum
+			sum := c.Request.Hash.Sum(nil)
+			if !bytes.Equal(sum, c.Request.Checksum) {
+				return c.close(newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum)))
+			}
+		}
+	}
+
 	return c.close(nil)
 }
 
@@ -115,11 +139,6 @@ func (c *Response) close(err error) error {
 
 	// stop time
 	c.End = time.Now()
-
-	// signal
-	if c.Request != nil && c.Request.SuccessNotify != nil {
-		c.Request.SuccessNotify <- (err == nil)
-	}
 
 	// pass error back
 	return err

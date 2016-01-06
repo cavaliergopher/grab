@@ -46,8 +46,6 @@ type Request struct {
 	// If the checksum values do not match, the file is deleted and an error
 	// returned.
 	Checksum []byte
-
-	SuccessNotify chan<- bool
 }
 
 // NewRequest returns a new file transfer Request given a URL, suitable for use

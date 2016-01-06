@@ -7,6 +7,7 @@ import (
 const (
 	errBadLength = iota
 	errNoFilename
+	errChecksumMismatch
 )
 
 // grabError is a custom error type
@@ -51,4 +52,10 @@ func IsContentLengthMismatch(err error) bool {
 // Content-Disposition headers of a HTTP response or the request URL's path.
 func IsNoFilename(err error) bool {
 	return isErrorType(err, errNoFilename)
+}
+
+// IsChecksumMismatch returns a boolean indicating whether the error is known to
+// report that the downloaded file did not match the expected checksum value.
+func IsChecksumMismatch(err error) bool {
+	return isErrorType(err, errChecksumMismatch)
 }
