@@ -16,8 +16,13 @@ import (
 //
 // Clients are safe for concurrent use by multiple goroutines.
 type Client struct {
+	// HTTPClient specifies the http.Client which will be used for communicating
+	// with the remote server during the file transfer.
 	HTTPClient *http.Client
-	UserAgent  string
+
+	// UserAgent specifies the User-Agent string which will be set in the
+	// headers of all requests made by this client.
+	UserAgent string
 }
 
 // NewClient returns a new file transfer Client, using default transport
@@ -32,6 +37,9 @@ func NewClient() *Client {
 		},
 	}
 }
+
+// DefaultClient is the default client and is used by Get.
+var DefaultClient = NewClient()
 
 // Do sends a file transfer request and returns a file transfer response
 // context, following policy (e.g. redirects, cookies, auth) as configured on
@@ -54,6 +62,19 @@ func (c *Client) Do(req *Request) (*Response, error) {
 	return resp, nil
 }
 
+// DoAsync sends a file transfer request and returns a file transfer response
+// context, following policy (e.g. redirects, cookies, auth) as configured on
+// the client's HTTPClient.
+//
+// The Response is returned as soon as a HTTP/1.1 HEAD request has completed to
+// determine the size of the requested file and supported server features.
+//
+// The Response may then be used to gauge the progress of the file transfer
+// while it is in process.
+//
+// If an error occurs while initializing the request, it will be returned
+// immediately. Any error which occurs during the file transfer will instead be
+// set on the returned Response at the time which it occurs.
 func (c *Client) DoAsync(req *Request) (*Response, error) {
 	// prepare request with HEAD request
 	resp, err := c.prepare(req)

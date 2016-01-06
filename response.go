@@ -7,6 +7,9 @@ import (
 )
 
 // Response represents the response from an HTTP transfer request.
+//
+// For asyncronous operations, the Response also provides context for the file
+// transfer while it is process.
 type Response struct {
 	// The Request that was sent to obtain this Response.
 	Request *Request
