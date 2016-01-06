@@ -53,6 +53,19 @@ func (c *Client) Do(req *Request) (*Response, error) {
 	return resp, nil
 }
 
+func (c *Client) DoAsync(req *Request) (*Response, error) {
+	// prepare request with HEAD request
+	resp, err := c.prepare(req)
+	if err != nil {
+		return resp, err
+	}
+
+	// transfer content
+	go c.transfer(req, resp)
+
+	return resp, nil
+}
+
 // prepare creates a Response context for the given request using a HTTP HEAD
 // request to the remote server.
 func (c *Client) prepare(req *Request) (*Response, error) {

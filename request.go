@@ -67,7 +67,7 @@ func (c *Request) URL() *url.URL {
 	return c.HTTPRequest.URL
 }
 
-// SetChecksum sets the request's checksum value and hashing algorith to use
+// SetChecksum sets the request's checksum value and hashing algorithm to use
 // when validating a completed file transfer.
 //
 // If the checksum values do not match, the file is deleted and an error

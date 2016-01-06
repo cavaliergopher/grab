@@ -49,6 +49,8 @@ func (c *Response) ProgressRatio() float64 {
 	return float64(atomic.LoadUint64(&c.progress)) / float64(c.Size)
 }
 
+// setError sets the response context error if any was encountered during
+// transfer.
 func (c *Response) setError(err error) error {
 	c.Error = err
 	return err
