@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 )
 
 // A Client is an HTTP file transfer client. Its zero value is a usable client
@@ -106,7 +107,7 @@ func (c *Client) prepare(req *Request) (*Response, error) {
 
 	// get file metadata
 	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err == nil && (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
-		// is a known size set and a size returned in the HEAd request?
+		// is a known size set and a size returned in the HEAD request?
 		if req.Size == 0 && hresp.ContentLength > 0 {
 			resp.Size = uint64(hresp.ContentLength)
 		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
@@ -140,6 +141,9 @@ func (c *Client) prepare(req *Request) (*Response, error) {
 
 // transfer initiates a file transfer for a prepared Response context.
 func (c *Client) transfer(req *Request, resp *Response) error {
+	// start timer - duration includes file seeking and HEAD request
+	resp.Start = time.Now()
+
 	// open destination for writing
 	f, err := os.OpenFile(resp.Filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
@@ -147,7 +151,7 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 	}
 
 	// seek to the start of the file
-	resp.progress = 0
+	resp.bytesTransferred = 0
 	if _, err := f.Seek(0, 0); err != nil {
 		return resp.setError(err)
 	}
@@ -162,7 +166,7 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 			if _, err = f.Seek(0, os.SEEK_END); err != nil {
 				return resp.setError(err)
 			} else {
-				atomic.AddUint64(&resp.progress, uint64(fi.Size()))
+				atomic.AddUint64(&resp.bytesTransferred, uint64(fi.Size()))
 
 				// set byte range header in next request
 				req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
@@ -171,7 +175,7 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 	}
 
 	// skip if already downloaded
-	if resp.Size > 0 && resp.Size == resp.progress {
+	if resp.Size > 0 && resp.Size == resp.bytesTransferred {
 		return nil
 	}
 
@@ -182,8 +186,8 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 		// TODO: Validate response code
 
 		// validate content length
-		if resp.Size > 0 && resp.Size != (resp.progress+uint64(hresp.ContentLength)) {
-			return resp.setError(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.progress))
+		if resp.Size > 0 && resp.Size != (resp.bytesTransferred+uint64(hresp.ContentLength)) {
+			return resp.setError(errorf(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
 		}
 
 		// download and update progress
@@ -196,7 +200,7 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 			}
 
 			// increment progress
-			atomic.AddUint64(&resp.progress, uint64(n))
+			atomic.AddUint64(&resp.bytesTransferred, uint64(n))
 
 			// write to file
 			if _, werr := f.Write(buffer[:n]); werr != nil {
@@ -209,6 +213,8 @@ func (c *Client) transfer(req *Request, resp *Response) error {
 			}
 		}
 	}
+
+	resp.End = time.Now()
 
 	return nil
 }

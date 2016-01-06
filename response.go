@@ -3,6 +3,7 @@ package grab
 import (
 	"net/http"
 	"sync/atomic"
+	"time"
 )
 
 // Response represents the response from an HTTP transfer request.
@@ -25,33 +26,49 @@ type Response struct {
 	// that created this response.
 	Error error
 
-	// progress specifies the number of bytes which have already been
+	// Start specifies the time at which the file transfer started.
+	Start time.Time
+
+	// End specifies the time at which the file transfer completed.
+	End time.Time
+
+	// bytesTransferred specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
-	progress uint64
+	bytesTransferred uint64
 
 	// canResume specifies whether the server support ranged transfers for
 	// resuming previous transfers.
 	canResume bool
 }
 
-// Progress returns the number of bytes which have already been downloaded.
-func (c *Response) Progress() uint64 {
-	return atomic.LoadUint64(&c.progress)
+// IsComplete indicates whether the Response transfer context has completed with
+// either a success or failure.
+func (c *Response) IsComplete() bool {
+	// Either progress will be 100% or an error will be set when this transfer
+	// is complete.
+	return c.Error != nil || c.BytesTransferred() == c.Size
 }
 
-// ProgressRatio returns the ratio of bytes which have already been downloaded
-// over the total content length.
-func (c *Response) ProgressRatio() float64 {
+// BytesTransferred atomically returns the number of bytes which have already been
+// downloaded.
+func (c *Response) BytesTransferred() uint64 {
+	return atomic.LoadUint64(&c.bytesTransferred)
+}
+
+// Progress returns the ratio of bytes which have already been downloaded over
+// the total content length as a fraction of 1.00.
+func (c *Response) Progress() float64 {
 	if c.Size == 0 {
 		return 0
 	}
 
-	return float64(atomic.LoadUint64(&c.progress)) / float64(c.Size)
+	return float64(atomic.LoadUint64(&c.bytesTransferred)) / float64(c.Size)
 }
 
 // setError sets the response context error if any was encountered during
 // transfer.
 func (c *Response) setError(err error) error {
 	c.Error = err
+	c.End = time.Now()
 	return err
 }
