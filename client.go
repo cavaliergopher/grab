@@ -2,10 +2,12 @@ package grab
 
 import (
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -121,6 +123,9 @@ func (c *Client) do(req *Request) (*Response, error) {
 		resp.Filename = req.Filename
 	}
 
+	// default write flags
+	wflags := os.O_CREATE | os.O_WRONLY
+
 	// set user agent string
 	if c.UserAgent != "" && req.HTTPRequest.Header.Get("User-Agent") == "" {
 		req.HTTPRequest.Header.Set("User-Agent", c.UserAgent)
@@ -145,9 +150,20 @@ func (c *Client) do(req *Request) (*Response, error) {
 		// does server supports resuming downloads?
 		if hresp.Header.Get("Accept-Ranges") == "bytes" {
 			resp.canResume = true
+			wflags |= os.O_APPEND
 		}
 
-		// TODO: get filename from Content-Disposition header
+		// get filename from Content-Disposition header
+		if needFilename {
+			if cd := hresp.Header.Get("Content-Disposition"); cd != "" {
+				if _, params, err := mime.ParseMediaType(cd); err == nil {
+					if filename, ok := params["filename"]; ok {
+						resp.Filename = filename
+						needFilename = false
+					}
+				}
+			}
+		}
 	}
 
 	// reset request
@@ -155,17 +171,17 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 	// compute filename from URL if still needed
 	if needFilename {
-		filename := path.Base(req.HTTPRequest.URL.Path)
-		if filename == "" {
+		if req.HTTPRequest.URL.Path == "" || strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
 			return resp, resp.close(newGrabError(errNoFilename, "No filename could be determined"))
 		} else {
 			// update filepath with filename from URL
-			resp.Filename = filepath.Join(req.Filename, filename)
+			resp.Filename = filepath.Join(req.Filename, path.Base(req.HTTPRequest.URL.Path))
+			needFilename = false
 		}
 	}
 
 	// open destination for writing
-	f, err := os.OpenFile(resp.Filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	f, err := os.OpenFile(resp.Filename, wflags, 0644)
 	if err != nil {
 		return resp, resp.close(err)
 	}
