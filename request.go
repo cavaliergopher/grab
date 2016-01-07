@@ -52,6 +52,9 @@ type Request struct {
 	Checksum []byte
 }
 
+// Requests is a slice of pointers to Request structs.
+type Requests []*Request
+
 // NewRequest returns a new file transfer Request given a URL, suitable for use
 // with client.Do.
 func NewRequest(urlStr string) (*Request, error) {

@@ -183,6 +183,8 @@ func TestAutoResume(t *testing.T) {
 
 	// TODO: redownload and check time stamp
 
+	// TODO: ensure checksum is performed on pre-existing file
+
 	// error if existing file is larger than requested file
 	{
 		// request smaller segment
@@ -200,5 +202,40 @@ func TestAutoResume(t *testing.T) {
 	// delete downloaded file
 	if err := os.Remove(filename); err != nil {
 		t.Errorf("Error deleting test file: %v", err)
+	}
+}
+
+func TestBatch(t *testing.T) {
+	tests := 10
+	//size := 8192
+	//sum := "dc404a613fedaeb54034514bc6505f56b933caa5250299ba7d094377a51caa45"
+	size := 134217728
+	sum := "abcd"
+	sumb, _ := hex.DecodeString(sum)
+
+	// create requests
+	reqs := make(Requests, tests)
+	for i := 0; i < len(reqs); i++ {
+		reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/?size=%d", size))
+		reqs[i].Filename = fmt.Sprintf(".testBatch.%d", i+1)
+		if err := reqs[i].SetChecksum("sha256", sumb); err != nil {
+			t.Fatal(err.Error())
+		}
+	}
+
+	// batch run
+	responses := DefaultClient.DoBatch(reqs, 4)
+
+	// listen for responses
+	for i := 0; i < len(reqs); i++ {
+		resp := <-responses
+
+		// handle errors
+		if resp.Error != nil {
+			t.Errorf("%s: %v", resp.Filename, resp.Error)
+		}
+
+		// remove test file
+		os.Remove(resp.Filename)
 	}
 }

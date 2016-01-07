@@ -50,6 +50,21 @@ type Response struct {
 	// canResume specifies whether the server support ranged transfers for
 	// resuming previous transfers.
 	canResume bool
+
+	doneSubscribers []chan struct{}
+}
+
+func (c *Response) Done() <-chan struct{} {
+	// TODO: response might already be closed before resp.Done() is called.
+
+	if c.doneSubscribers == nil {
+		c.doneSubscribers = make([]chan struct{}, 0)
+	}
+
+	sub := make(chan struct{}, 0)
+	c.doneSubscribers = append(c.doneSubscribers, sub)
+
+	return sub
 }
 
 // IsComplete indicates whether the Response transfer context has completed with
@@ -145,6 +160,12 @@ func (c *Response) close(err error) error {
 
 	// stop time
 	c.End = time.Now()
+
+	if c.doneSubscribers != nil {
+		for _, sub := range c.doneSubscribers {
+			close(sub)
+		}
+	}
 
 	// pass error back
 	return err

@@ -93,7 +93,40 @@ func (c *Client) DoAsync(req *Request) (*Response, error) {
 	return resp, nil
 }
 
-// prepare creates a Response context for the given request using a HTTP HEAD
+func (c *Client) DoBatch(reqs Requests, maxConns int) <-chan *Response {
+	responses := make(chan *Response, maxConns)
+
+	// start work queue
+	producer := make(chan *Request, maxConns)
+	go func() {
+		for i := 0; i < len(reqs); i++ {
+			producer <- reqs[i]
+		}
+		close(producer)
+	}()
+
+	// start workers
+	for i := 0; i < maxConns; i++ {
+		go func() {
+			for req := range producer {
+				// start request
+				resp, _ := c.DoAsync(req)
+
+				// ship state to caller
+				responses <- resp
+
+				// TODO: wait for async to finish before next request
+				<-resp.Done()
+			}
+		}()
+
+		// TODO close batch responses channel when all requests have been sent
+	}
+
+	return responses
+}
+
+// do creates a Response context for the given request using a HTTP HEAD
 // request to the remote server.
 func (c *Client) do(req *Request) (*Response, error) {
 	// create a response
