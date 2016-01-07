@@ -30,6 +30,10 @@ type Request struct {
 	// directory.
 	Filename string
 
+	// RemoveOnError specifies that any completed download should be deleted if
+	// it fails checksum validation.
+	RemoveOnError bool
+
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and an
 	// error returned.

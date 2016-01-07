@@ -116,9 +116,15 @@ func (c *Response) copy() error {
 				return c.close(err)
 			}
 
-			// checksum
+			// compare checksum
 			sum := c.Request.Hash.Sum(nil)
 			if !bytes.Equal(sum, c.Request.Checksum) {
+				// delete file
+				if c.Request.RemoveOnError {
+					f.Close()
+					os.Remove(c.Filename)
+				}
+
 				return c.close(newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum)))
 			}
 		}
