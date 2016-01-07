@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 			}
 		}
 
-		// support ranged requests?
+		// support ranged requests (default yes)?
 		ranged := true
 		if rangep := r.URL.Query().Get("ranged"); rangep != "" {
 			if _, err := fmt.Sscanf(rangep, "%t", &ranged); err != nil {
@@ -34,24 +34,25 @@ func TestMain(m *testing.M) {
 			}
 		}
 
-		// set filename in headers?
+		// set filename in headers (default no)?
 		if filenamep := r.URL.Query().Get("filename"); filenamep != "" {
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment;filename=\"%s\"", filenamep))
 		}
 
+		// compute offset
+		offset := 0
+		if rangeh := r.Header.Get("Range"); rangeh != "" {
+			if _, err := fmt.Sscanf(rangeh, "bytes=%d-", &offset); err != nil {
+				panic(err)
+			}
+		}
+
 		// set response headers
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", size-offset))
 		w.Header().Set("Accept-Ranges", "bytes")
 
+		// serve content body if method == "GET"
 		if r.Method == "GET" {
-			// compute offset
-			offset := 0
-			if rangeh := r.Header.Get("Range"); rangeh != "" {
-				if _, err := fmt.Sscanf(rangeh, "bytes=%d-", &offset); err != nil {
-					panic(err)
-				}
-			}
-
 			// write to stream
 			bw := bufio.NewWriterSize(w, 4096)
 			for i := offset; i < size; i++ {
@@ -94,7 +95,7 @@ func TestWithFilename(t *testing.T) {
 	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
 	req.Filename = ".testWithFilename"
 
-	testFilename(t, req, req.Filename)
+	testFilename(t, req, ".testWithFilename")
 }
 
 // TestWithHeaderFilename asserts that the downloaded filename matches a
@@ -144,10 +145,46 @@ func testChecksum(t *testing.T, size int, sum string, match bool) {
 // TestChecksums executes a number of checksum tests via testChecksum.
 func TestChecksums(t *testing.T) {
 	testChecksum(t, 128, "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true)
-	testChecksum(t, 1024, "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true)
-	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true)
+	testChecksum(t, 128, "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false)
 
-	testChecksum(t, 128, "00112233", false)
-	testChecksum(t, 1024, "00112233", false)
-	testChecksum(t, 1048576, "00112233", false)
+	testChecksum(t, 1024, "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true)
+	testChecksum(t, 1024, "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false)
+
+	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true)
+	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false)
+}
+
+func TestAutoResume(t *testing.T) {
+	segs := 32
+	size := 1048576
+	filename := ".testAutoResume"
+
+	// TODO: random segment size
+
+	// download segment at a time
+	for i := 1; i < segs; i++ {
+		// request larger segment
+		segsize := i * (size / segs)
+		req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", segsize))
+		req.Filename = filename
+
+		// transfer
+		if _, err := DefaultClient.Do(req); err != nil {
+			t.Errorf("Error segment %d (%d bytes): %v", i, segsize, err)
+			break
+		}
+	}
+
+	// TODO: redownload and check time stamp
+
+	// TODO: validate checksum
+
+	// TODO: existing file is larger than expected
+
+	// TODO: existing file is corrupted
+
+	// delete downloaded file
+	if err := os.Remove(filename); err != nil {
+		t.Errorf("Error deleting test file: %v", err)
+	}
 }
