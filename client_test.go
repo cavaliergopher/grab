@@ -162,11 +162,17 @@ func TestAutoResume(t *testing.T) {
 	// TODO: random segment size
 
 	// download segment at a time
-	for i := 1; i < segs; i++ {
+	for i := 0; i < segs; i++ {
 		// request larger segment
-		segsize := i * (size / segs)
+		segsize := (i + 1) * (size / segs)
 		req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", segsize))
 		req.Filename = filename
+
+		// checksum the last request
+		if i == segs-1 {
+			sum, _ := hex.DecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
+			req.SetChecksum("sha256", sum)
+		}
 
 		// transfer
 		if _, err := DefaultClient.Do(req); err != nil {
@@ -177,9 +183,17 @@ func TestAutoResume(t *testing.T) {
 
 	// TODO: redownload and check time stamp
 
-	// TODO: validate checksum
+	// error if existing file is larger than requested file
+	{
+		// request smaller segment
+		req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", size/segs))
+		req.Filename = filename
 
-	// TODO: existing file is larger than expected
+		// transfer
+		if _, err := DefaultClient.Do(req); !IsContentLengthMismatch(err) {
+			t.Errorf("Expected bad length error, got: %v", err)
+		}
+	}
 
 	// TODO: existing file is corrupted
 

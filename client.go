@@ -144,7 +144,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 		if req.Size == 0 && hresp.ContentLength > 0 {
 			resp.Size = uint64(hresp.ContentLength)
 		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
-			return resp, resp.close(newGrabError(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, req.Size))
+			return resp, resp.close(newGrabError(errBadLength, "Bad content length in HEAD response: %d, expected %d", hresp.ContentLength, req.Size))
 		}
 
 		// does server supports resuming downloads?
@@ -198,6 +198,10 @@ func (c *Client) do(req *Request) (*Response, error) {
 		if fi, err := f.Stat(); err != nil {
 			resp.Error = err
 			return resp, resp.close(err)
+
+		} else if uint64(fi.Size()) > resp.Size {
+			return resp, resp.close(newGrabError(errBadLength, "Exising file is larger than remote"))
+
 		} else if fi.Size() > 0 {
 			// seek to end of file
 			if _, err = f.Seek(0, os.SEEK_END); err != nil {
@@ -227,7 +231,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 		// validate content length
 		if resp.Size > 0 && resp.Size != (resp.bytesTransferred+uint64(hresp.ContentLength)) {
-			return resp, resp.close(newGrabError(errBadLength, "Bad content length: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
+			return resp, resp.close(newGrabError(errBadLength, "Bad content length in GET response: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
 		}
 	}
 
