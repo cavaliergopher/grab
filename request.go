@@ -50,6 +50,8 @@ type Request struct {
 	// If the checksum values do not match, the file is deleted and an error
 	// returned.
 	Checksum []byte
+
+	NotifyOnClose chan<- *Response
 }
 
 // Requests is a slice of pointers to Request structs.

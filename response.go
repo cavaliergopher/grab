@@ -51,28 +51,15 @@ type Response struct {
 	// resuming previous transfers.
 	canResume bool
 
-	doneSubscribers []chan struct{}
-}
-
-func (c *Response) Done() <-chan struct{} {
-	// TODO: response might already be closed before resp.Done() is called.
-
-	if c.doneSubscribers == nil {
-		c.doneSubscribers = make([]chan struct{}, 0)
-	}
-
-	sub := make(chan struct{}, 0)
-	c.doneSubscribers = append(c.doneSubscribers, sub)
-
-	return sub
+	// doneFlag is incremented once the transfer is finalized, either
+	// successfully or with errors.
+	doneFlag int32
 }
 
 // IsComplete indicates whether the Response transfer context has completed with
 // either a success or failure.
 func (c *Response) IsComplete() bool {
-	// Either progress will be 100% or an error will be set when this transfer
-	// is complete.
-	return c.Error != nil || c.BytesTransferred() == c.Size
+	return atomic.LoadInt32(&c.doneFlag) > 0
 }
 
 // BytesTransferred atomically returns the number of bytes which have already been
@@ -91,6 +78,7 @@ func (c *Response) Progress() float64 {
 	return float64(atomic.LoadUint64(&c.bytesTransferred)) / float64(c.Size)
 }
 
+// copy transfers content for a HTTP connection established via Client.do()
 func (c *Response) copy() error {
 	// close writer when finished
 	defer c.writer.Close()
@@ -148,6 +136,7 @@ func (c *Response) copy() error {
 	return c.close(nil)
 }
 
+// close finalizes are response context
 func (c *Response) close(err error) error {
 	// close any file handle
 	if c.writer != nil {
@@ -161,10 +150,12 @@ func (c *Response) close(err error) error {
 	// stop time
 	c.End = time.Now()
 
-	if c.doneSubscribers != nil {
-		for _, sub := range c.doneSubscribers {
-			close(sub)
-		}
+	// set done flag
+	atomic.AddInt32(&c.doneFlag, 1)
+
+	// notify
+	if c.Request.NotifyOnClose != nil {
+		c.Request.NotifyOnClose <- c
 	}
 
 	// pass error back

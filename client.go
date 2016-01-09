@@ -65,62 +65,99 @@ func (c *Client) Do(req *Request) (*Response, error) {
 	return resp, nil
 }
 
-// DoAsync sends a file transfer request and returns a file transfer response
-// context, following policy (e.g. redirects, cookies, auth) as configured on
-// the client's HTTPClient.
+// DoAsync sends a file transfer request and returns a channel to receive the
+// file transfer response context.
 //
-// The Response is returned as soon as a HTTP/1.1 HEAD request has completed to
-// determine the size of the requested file and supported server features.
+// The Response is sent via the returned channel as soon as the HTTP/1.1 GET
+// request has been served; before the file transfer begins.
 //
 // The Response may then be used to gauge the progress of the file transfer
 // while it is in process.
 //
-// If an error occurs while initializing the request, it will be returned
-// immediately. Any error which occurs during the file transfer will instead be
-// set on the returned Response at the time which it occurs.
-func (c *Client) DoAsync(req *Request) (*Response, error) {
-	// prepare request with HEAD request
-	resp, err := c.do(req)
-	if err != nil {
-		return resp, err
-	}
+// Any error which occurs during the file transfer will be set in the returned
+// Response.Error field at the time which it occurs.
+func (c *Client) DoAsync(req *Request) <-chan *Response {
+	r := make(chan *Response, 0)
+	go func() {
+		// prepare request with HEAD request
+		resp, err := c.do(req)
+		if err == nil && !resp.IsComplete() {
+			// transfer data in new goroutine
+			go func() {
+				resp.copy()
+			}()
+		}
 
-	// transfer content in new go-routine
-	if !resp.IsComplete() {
-		go resp.copy()
-	}
+		r <- resp
+	}()
 
-	return resp, nil
+	return r
 }
 
-func (c *Client) DoBatch(reqs Requests, maxConns int) <-chan *Response {
-	responses := make(chan *Response, maxConns)
+// DoBatch executes multiple requests with the given number of workers and
+// returns a channel to receive the file transfer response contexts.
+//
+// Each response is sent through the channel twice: once when the request is
+// initiated via HTTP GET, and again once the file transfer has completed or an
+// error has occurred.
+//
+// Any error which occurs during any of the file transfers will be set in the
+// associated Response.Error field.
+func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
+	// TODO: enable cancelling of batch jobs
+
+	responses := make(chan *Response, 0)
+	workerDone := make(chan bool, 0)
 
 	// start work queue
-	producer := make(chan *Request, maxConns)
+	producer := make(chan *Request, 0)
 	go func() {
+		// feed queue
 		for i := 0; i < len(reqs); i++ {
 			producer <- reqs[i]
 		}
 		close(producer)
+
+		// close channel when all workers are finished
+		for i := 0; i < workers; i++ {
+			<-workerDone
+		}
+
+		close(responses)
 	}()
 
 	// start workers
-	for i := 0; i < maxConns; i++ {
-		go func() {
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			// work until producer is dried up
 			for req := range producer {
+				// hijack notify channel
+				orig := req.NotifyOnClose
+				reqDone := make(chan *Response, workers)
+				req.NotifyOnClose = reqDone
+
 				// start request
-				resp, _ := c.DoAsync(req)
+				resp := <-c.DoAsync(req)
 
 				// ship state to caller
 				responses <- resp
 
-				// TODO: wait for async to finish before next request
-				<-resp.Done()
-			}
-		}()
+				// wait for async op to finish before moving to next request
+				n := <-reqDone
 
-		// TODO close batch responses channel when all requests have been sent
+				// restore notify channel
+				req.NotifyOnClose = orig
+				if orig != nil {
+					orig <- n
+				}
+
+				// ship again
+				responses <- resp
+			}
+
+			// signal worker is done
+			workerDone <- true
+		}(i)
 	}
 
 	return responses

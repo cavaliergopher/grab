@@ -61,7 +61,7 @@ func Get(dst, src string) (*Response, error) {
 // set on the returned Response at the time which it occurs.
 //
 // To make a request with custom headers, use NewRequest and DefaultClient.Do.
-func GetAsync(dst, src string) (*Response, error) {
+func GetAsync(dst, src string) (<-chan *Response, error) {
 	// init client and request
 	req, err := NewRequest(src)
 	if err != nil {
@@ -70,5 +70,5 @@ func GetAsync(dst, src string) (*Response, error) {
 
 	req.Filename = dst
 
-	return DefaultClient.DoAsync(req)
+	return DefaultClient.DoAsync(req), nil
 }
