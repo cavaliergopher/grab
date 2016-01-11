@@ -39,6 +39,10 @@ type Response struct {
 	// End specifies the time at which the file transfer completed.
 	End time.Time
 
+	// DidResume specifies that the file transfer resumed a previously
+	// incomplete transfer.
+	DidResume bool
+
 	// writer is the file handle used to write the downloaded file to local
 	// storage
 	writer io.WriteCloser
@@ -46,10 +50,6 @@ type Response struct {
 	// bytesTransferred specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
 	bytesTransferred uint64
-
-	// canResume specifies whether the server support ranged transfers for
-	// resuming previous transfers.
-	canResume bool
 
 	// doneFlag is incremented once the transfer is finalized, either
 	// successfully or with errors.

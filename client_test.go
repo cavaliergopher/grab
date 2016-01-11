@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // ts is the test HTTP server instance initiated by TestMain().
@@ -18,6 +20,12 @@ var ts *httptest.Server
 func TestMain(m *testing.M) {
 	// start test HTTP server
 	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// allow HEAD requests?
+		if _, ok := r.URL.Query()["nohead"]; ok && r.Method == "HEAD" {
+			http.Error(w, "HEAD method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		// compute transfer size from 'size' parameter (default 1Mb)
 		size := 1048576
 		if sizep := r.URL.Query().Get("size"); sizep != "" {
@@ -154,14 +162,68 @@ func TestChecksums(t *testing.T) {
 	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false)
 }
 
+func testSize(t *testing.T, url string, size uint64, match bool) {
+	req, _ := NewRequest(url)
+	req.Filename = ".testSize-mismatch-head"
+	req.Size = size
+
+	resp, err := DefaultClient.Do(req)
+	if match {
+		if err != nil {
+			t.Errorf(err.Error())
+		}
+	} else {
+		// we want a ContentLengthMismatch error
+		if !IsContentLengthMismatch(err) {
+			t.Errorf("Expected content length mismatch. Got: %v", err)
+		}
+	}
+
+	if err == nil {
+		// delete file
+		if err := os.Remove(resp.Filename); err != nil {
+			t.Errorf("Error deleting test file: %v", err)
+		}
+	}
+}
+
+func TestSize(t *testing.T) {
+	size := uint64(32768)
+
+	// bad size should error in HEAD request
+	testSize(t, ts.URL+fmt.Sprintf("?size=%d", size-1), size, false)
+
+	// bad size should error in GET request
+	testSize(t, ts.URL+fmt.Sprintf("?nohead&size=%d", size-1), size, false)
+
+	// test good size in HEAD request
+	testSize(t, ts.URL+fmt.Sprintf("?size=%d", size), size, true)
+
+	// test good size in GET request
+	testSize(t, ts.URL+fmt.Sprintf("?nohead&size=%d", size), size, true)
+
+	// test good size with no Content-Length header
+	// TODO: testSize(t, ts.URL+fmt.Sprintf("?nocl&size=%d", size), size, false)
+}
+
+func btime(name string) (time.Time, error) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(name, &st); err != nil {
+		return time.Time{}, err
+	}
+
+	return time.Unix(st.Birthtimespec.Sec, st.Birthtimespec.Nsec), nil
+}
+
 func TestAutoResume(t *testing.T) {
-	segs := 32
+	segs := 8
 	size := 1048576
 	filename := ".testAutoResume"
 
 	// TODO: random segment size
 
 	// download segment at a time
+	filectime := time.Time{}
 	for i := 0; i < segs; i++ {
 		// request larger segment
 		segsize := (i + 1) * (size / segs)
@@ -175,10 +237,29 @@ func TestAutoResume(t *testing.T) {
 		}
 
 		// transfer
-		if _, err := DefaultClient.Do(req); err != nil {
-			t.Errorf("Error segment %d (%d bytes): %v", i, segsize, err)
+		if resp, err := DefaultClient.Do(req); err != nil {
+			t.Errorf("Error segment %d (%d bytes): %v", i+1, segsize, err)
 			break
+		} else if i > 0 && !resp.DidResume {
+			t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
 		}
+
+		// check creation date (only accurate to one second)
+		if segctime, err := btime(req.Filename); err != nil {
+			t.Errorf(err.Error())
+		} else {
+			if filectime.Second() == 0 && filectime.Nanosecond() == 0 {
+				filectime = segctime
+			} else {
+				if segctime != filectime {
+					t.Errorf("File timestamp changed for segment %d ( from %v to %v )", i+1, filectime, segctime)
+					break
+				}
+			}
+		}
+
+		// sleep to allow ctime to roll over at least once
+		time.Sleep(time.Duration(1100/segs) * time.Millisecond)
 	}
 
 	// TODO: redownload and check time stamp
@@ -230,23 +311,13 @@ func TestBatch(t *testing.T) {
 	// listen for responses
 	for i := 0; i < len(reqs); {
 		select {
-		case resp := <-responses:
-			// monitor download progress
-			if resp.IsComplete() {
-				if resp.Error != nil {
-					fmt.Printf("Error downloading %s: %v\n", resp.Request.Label, resp.Error)
-				} else {
-					fmt.Printf("Download complete: %s\n", resp.Request.Label)
-				}
-			} else {
-				fmt.Printf("Download started: %s (%d%%)\n", resp.Request.Label, int(resp.Progress()*100))
-			}
+		case <-responses:
+			// swallow responses channel for newly initiated responses
+
 		case resp := <-done:
 			// handle errors
 			if resp.Error != nil {
 				t.Errorf("%s: %v", resp.Filename, resp.Error)
-			} else {
-				fmt.Printf("Download complete: %s\n", resp.Request.Label)
 			}
 
 			// remove test file

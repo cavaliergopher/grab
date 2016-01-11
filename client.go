@@ -171,13 +171,15 @@ func (c *Client) do(req *Request) (*Response, error) {
 	if fi, err := os.Stat(req.Filename); err == nil {
 		// file exists - is it a directory?
 		if fi.IsDir() {
-			// destination is a directory - compute a file name
+			// destination is a directory - compute a file name later
 			needFilename = true
 		}
 	} else if !os.IsNotExist(err) {
+		// file doesnt exist and an error occurred
 		return resp, resp.close(err)
 	}
 
+	// destination is a file that may or may not already exist
 	if !needFilename {
 		resp.Filename = req.Filename
 	}
@@ -185,58 +187,101 @@ func (c *Client) do(req *Request) (*Response, error) {
 	// default write flags
 	wflags := os.O_CREATE | os.O_WRONLY
 
+	// flag to resume previous download
+	doResume := false
+
 	// set user agent string
 	if c.UserAgent != "" && req.HTTPRequest.Header.Get("User-Agent") == "" {
 		req.HTTPRequest.Header.Set("User-Agent", c.UserAgent)
 	}
 
-	// switch the request to HEAD method
-	method := req.HTTPRequest.Method
-	req.HTTPRequest.Method = "HEAD"
+	// request HEAD first
+	methods := []string{"HEAD", req.HTTPRequest.Method}
+	for _, method := range methods {
+		// set request method
+		req.HTTPRequest.Method = method
 
-	// get file metadata
-	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err == nil && (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
-		// allow caller to see response if error occurs before final transfer
-		resp.HTTPResponse = hresp
+		// get response headers
+		if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
+			return resp, resp.close(err)
 
-		// is a known size set and a size returned in the HEAD request?
-		if req.Size == 0 && hresp.ContentLength > 0 {
-			resp.Size = uint64(hresp.ContentLength)
-		} else if req.Size > 0 && hresp.ContentLength > 0 && req.Size != uint64(hresp.ContentLength) {
-			return resp, resp.close(newGrabError(errBadLength, "Bad content length in HEAD response: %d, expected %d", hresp.ContentLength, req.Size))
-		}
+		} else if method != "HEAD" || (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
+			// ignore non 2XX results for HEAD requests.
+			// dont make assumptions about non 2XX statuses for GET requests -
+			// let the caller make such decisions.
 
-		// does server supports resuming downloads?
-		if hresp.Header.Get("Accept-Ranges") == "bytes" {
-			resp.canResume = true
-			wflags |= os.O_APPEND
-		}
+			// allow caller to see response if error occurs before final transfer
+			resp.HTTPResponse = hresp
 
-		// get filename from Content-Disposition header
-		if needFilename {
-			if cd := hresp.Header.Get("Content-Disposition"); cd != "" {
-				if _, params, err := mime.ParseMediaType(cd); err == nil {
-					if filename, ok := params["filename"]; ok {
-						resp.Filename = filename
-						needFilename = false
+			// set response size
+			if hresp.ContentLength > 0 {
+				resp.Size = resp.BytesTransferred() + uint64(hresp.ContentLength)
+			}
+
+			// check content length matches expected length
+			if req.Size > 0 && hresp.ContentLength > 0 && req.Size != resp.Size {
+				return resp, resp.close(newGrabError(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
+			}
+
+			// get filename from Content-Disposition header
+			if needFilename {
+				if cd := hresp.Header.Get("Content-Disposition"); cd != "" {
+					if _, params, err := mime.ParseMediaType(cd); err == nil {
+						if filename, ok := params["filename"]; ok {
+							resp.Filename = filename
+							needFilename = false
+						}
 					}
 				}
+			}
+
+			// get filename from url if still needed
+			if needFilename {
+				if req.HTTPRequest.URL.Path != "" && !strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
+					// update filepath with filename from URL
+					resp.Filename = filepath.Join(req.Filename, path.Base(req.HTTPRequest.URL.Path))
+					needFilename = false
+				}
+			}
+
+			// too bad if no filename found yet
+			if needFilename {
+				return resp, resp.close(newGrabError(errNoFilename, "No filename could be determined"))
+			}
+
+			// get fileinfo
+			if fi, err := os.Stat(resp.Filename); err == nil {
+				// check if existing file is larger than expected
+				if uint64(fi.Size()) > resp.Size {
+					return resp, resp.close(newGrabError(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
+				}
+
+				// check if resume is supported
+				if method == "HEAD" && hresp.Header.Get("Accept-Ranges") == "bytes" {
+					// resume previous download
+					doResume = true
+
+					// allow writer to append to existing file
+					wflags = os.O_APPEND | os.O_WRONLY
+
+					// update progress
+					atomic.AddUint64(&resp.bytesTransferred, uint64(fi.Size()))
+
+					// set byte range in next request
+					if fi.Size() > 0 {
+						req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
+					}
+				}
+			} else if !os.IsNotExist(err) {
+				// error is os.Stat
+				return resp, resp.close(err)
 			}
 		}
 	}
 
-	// reset request
-	req.HTTPRequest.Method = method
-
-	// compute filename from URL if still needed
-	if needFilename {
-		if req.HTTPRequest.URL.Path == "" || strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
-			return resp, resp.close(newGrabError(errNoFilename, "No filename could be determined"))
-		} else {
-			// update filepath with filename from URL
-			resp.Filename = filepath.Join(req.Filename, path.Base(req.HTTPRequest.URL.Path))
-			needFilename = false
-		}
+	// skip if already downloaded
+	if resp.Size > 0 && resp.Size == resp.BytesTransferred() {
+		return resp, resp.close(nil)
 	}
 
 	// open destination for writing
@@ -247,51 +292,17 @@ func (c *Client) do(req *Request) (*Response, error) {
 	resp.writer = f
 
 	// seek to the start of the file
-	resp.bytesTransferred = 0
 	if _, err := f.Seek(0, 0); err != nil {
 		return resp, resp.close(err)
 	}
 
-	// attempt to resume previous download (if any)
-	if resp.canResume {
-		if fi, err := f.Stat(); err != nil {
-			resp.Error = err
+	// seek to end if resuming previous download
+	if doResume {
+		if _, err = f.Seek(0, os.SEEK_END); err != nil {
 			return resp, resp.close(err)
-
-		} else if uint64(fi.Size()) > resp.Size {
-			return resp, resp.close(newGrabError(errBadLength, "Exising file is larger than remote"))
-
-		} else if fi.Size() > 0 {
-			// seek to end of file
-			if _, err = f.Seek(0, os.SEEK_END); err != nil {
-				return resp, resp.close(err)
-			} else {
-				atomic.AddUint64(&resp.bytesTransferred, uint64(fi.Size()))
-
-				// set byte range header in next request
-				req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
-			}
 		}
-	}
 
-	// skip if already downloaded
-	if resp.Size > 0 && resp.Size == resp.bytesTransferred {
-		return resp, resp.close(nil)
-	}
-
-	// request content
-	if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
-		return resp, resp.close(err)
-	} else {
-		// set HTTP response in transfer context
-		resp.HTTPResponse = hresp
-
-		// TODO: Validate HTTP response codes
-
-		// validate content length
-		if resp.Size > 0 && resp.Size != (resp.bytesTransferred+uint64(hresp.ContentLength)) {
-			return resp, resp.close(newGrabError(errBadLength, "Bad content length in GET response: %d, expected %d", hresp.ContentLength, resp.Size-resp.bytesTransferred))
-		}
+		resp.DidResume = true
 	}
 
 	// response context is ready to start transfer with resp.copy()
