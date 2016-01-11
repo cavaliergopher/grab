@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"encoding/hex"
 	"fmt"
+	"github.com/djherbis/times"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -206,15 +206,6 @@ func TestSize(t *testing.T) {
 	// TODO: testSize(t, ts.URL+fmt.Sprintf("?nocl&size=%d", size), size, false)
 }
 
-func btime(name string) (time.Time, error) {
-	var st syscall.Stat_t
-	if err := syscall.Stat(name, &st); err != nil {
-		return time.Time{}, err
-	}
-
-	return time.Unix(st.Birthtimespec.Sec, st.Birthtimespec.Nsec), nil
-}
-
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
@@ -223,7 +214,7 @@ func TestAutoResume(t *testing.T) {
 	// TODO: random segment size
 
 	// download segment at a time
-	filectime := time.Time{}
+	filebtime := time.Time{}
 	for i := 0; i < segs; i++ {
 		// request larger segment
 		segsize := (i + 1) * (size / segs)
@@ -244,22 +235,25 @@ func TestAutoResume(t *testing.T) {
 			t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
 		}
 
-		// check creation date (only accurate to one second)
-		if segctime, err := btime(req.Filename); err != nil {
-			t.Errorf(err.Error())
-		} else {
-			if filectime.Second() == 0 && filectime.Nanosecond() == 0 {
-				filectime = segctime
+		// only check birth time on OS's that support it
+		if times.HasBirthTime {
+			if ts, err := times.Stat(req.Filename); err != nil {
+				t.Errorf(err.Error())
 			} else {
-				if segctime != filectime {
-					t.Errorf("File timestamp changed for segment %d ( from %v to %v )", i+1, filectime, segctime)
-					break
+				if filebtime.Second() == 0 && filebtime.Nanosecond() == 0 {
+					filebtime = ts.BirthTime()
+				} else {
+					// check creation date (only accurate to one second)
+					if ts.BirthTime() != filebtime {
+						t.Errorf("File timestamp changed for segment %d ( from %v to %v )", i+1, filebtime, ts.BirthTime())
+						break
+					}
 				}
 			}
-		}
 
-		// sleep to allow ctime to roll over at least once
-		time.Sleep(time.Duration(1100/segs) * time.Millisecond)
+			// sleep to allow ctime to roll over at least once
+			time.Sleep(time.Duration(1100/segs) * time.Millisecond)
+		}
 	}
 
 	// TODO: redownload and check time stamp
