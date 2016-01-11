@@ -216,6 +216,7 @@ func TestBatch(t *testing.T) {
 	reqs := make(Requests, tests)
 	for i := 0; i < len(reqs); i++ {
 		reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/request_%d?size=%d", i, size))
+		reqs[i].Label = fmt.Sprintf("Test %d", i+1)
 		reqs[i].Filename = fmt.Sprintf(".testBatch.%d", i+1)
 		reqs[i].NotifyOnClose = done
 		if err := reqs[i].SetChecksum("sha256", sumb); err != nil {
@@ -233,19 +234,19 @@ func TestBatch(t *testing.T) {
 			// monitor download progress
 			if resp.IsComplete() {
 				if resp.Error != nil {
-					fmt.Printf("Error downloading %s: %v\n", resp.Request.URL(), resp.Error)
+					fmt.Printf("Error downloading %s: %v\n", resp.Request.Label, resp.Error)
 				} else {
-					fmt.Printf("Download complete: %s\n", resp.Request.URL())
+					fmt.Printf("Download complete: %s\n", resp.Request.Label)
 				}
 			} else {
-				fmt.Printf("Download started: %s (%d%%)\n", resp.Request.URL(), int(resp.Progress()*100))
+				fmt.Printf("Download started: %s (%d%%)\n", resp.Request.Label, int(resp.Progress()*100))
 			}
 		case resp := <-done:
 			// handle errors
 			if resp.Error != nil {
 				t.Errorf("%s: %v", resp.Filename, resp.Error)
 			} else {
-				fmt.Printf("Download complete: %s\n", resp.Request.URL())
+				fmt.Printf("Download complete: %s\n", resp.Request.Label)
 			}
 
 			// remove test file

@@ -136,7 +136,7 @@ func (c *Response) copy() error {
 	return c.close(nil)
 }
 
-// close finalizes are response context
+// close finalizes the response context
 func (c *Response) close(err error) error {
 	// close any file handle
 	if c.writer != nil {
@@ -162,6 +162,6 @@ func (c *Response) close(err error) error {
 		c.Request.NotifyOnClose <- c
 	}
 
-	// pass error back
+	// pass error back to caller
 	return err
 }

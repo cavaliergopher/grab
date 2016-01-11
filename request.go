@@ -13,6 +13,14 @@ import (
 
 // A Request represents an HTTP file transfer request to be sent by a client.
 type Request struct {
+	// Label is an arbitrary string which may used to identify a request when it
+	// is returned, attached to a Response.
+	Label string
+
+	// Tag is an arbitrary interface which may be used to relate a request to
+	// other data when it is returned, attached to a Response.
+	Tag interface{}
+
 	// HTTPRequest specifies the HTTP request to be sent to the remote server
 	// to initiate a file transfer. It includes request configuration such as
 	// URL, protocol version, HTTP method, request headers and authentication.
