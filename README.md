@@ -1,6 +1,8 @@
-# grab [![Build Status](https://travis-ci.org/cavaliercoder/grab.svg)](https://travis-ci.org/cavaliercoder/grab) [![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab)
+# grab
 
-__Downloading the internet, one go routine at a time!__
+[![Build Status](https://travis-ci.org/cavaliercoder/grab.svg)](https://travis-ci.org/cavaliercoder/grab) [![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab)
+
+*Downloading the internet, one go routine at a time!*
 
 Grab is a Go package for downloading files from the internet with the following
 rad features:
