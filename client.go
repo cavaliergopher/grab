@@ -68,8 +68,8 @@ func (c *Client) Do(req *Request) (*Response, error) {
 // DoAsync sends a file transfer request and returns a channel to receive the
 // file transfer response context.
 //
-// The Response is sent via the returned channel as soon as the HTTP/1.1 GET
-// request has been served; before the file transfer begins.
+// The Response is sent via the returned channel and the channel closed as soon
+// as the HTTP/1.1 GET request has been served; before the file transfer begins.
 //
 // The Response may then be used to gauge the progress of the file transfer
 // while it is in process.
@@ -89,25 +89,26 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 		}
 
 		r <- resp
+		close(r)
 	}()
 
 	return r
 }
 
 // DoBatch executes multiple requests with the given number of workers and
-// returns a channel to receive the file transfer response contexts.
+// returns a channel to receive the file transfer response contexts. The channel
+// is closed once all responses have been received.
 //
-// Each response is sent through the channel twice: once when the request is
-// initiated via HTTP GET, and again once the file transfer has completed or an
-// error has occurred.
+// Each response is sent through the channel once the request is initiated via
+// HTTP GET or an error has occurred but before the file transfer begins.
 //
 // Any error which occurs during any of the file transfers will be set in the
 // associated Response.Error field.
 func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
-	responses := make(chan *Response, 0)
-	workerDone := make(chan bool, 0)
+	responses := make(chan *Response, workers)
+	workerDone := make(chan bool, workers)
 
 	// start work queue
 	producer := make(chan *Request, 0)
@@ -122,7 +123,6 @@ func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
 		for i := 0; i < workers; i++ {
 			<-workerDone
 		}
-
 		close(responses)
 	}()
 
@@ -131,10 +131,8 @@ func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
 		go func(i int) {
 			// work until producer is dried up
 			for req := range producer {
-				// hijack notify channel
-				orig := req.NotifyOnClose
-				reqDone := make(chan *Response, workers)
-				req.NotifyOnClose = reqDone
+				// set up notifier
+				req.notifyOnCloseInternal = make(chan *Response, 1)
 
 				// start request
 				resp := <-c.DoAsync(req)
@@ -143,16 +141,7 @@ func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
 				responses <- resp
 
 				// wait for async op to finish before moving to next request
-				n := <-reqDone
-
-				// restore notify channel
-				req.NotifyOnClose = orig
-				if orig != nil {
-					orig <- n
-				}
-
-				// ship again
-				responses <- resp
+				<-req.notifyOnCloseInternal
 			}
 
 			// signal worker is done

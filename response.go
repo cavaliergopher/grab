@@ -154,6 +154,10 @@ func (c *Response) close(err error) error {
 	atomic.AddInt32(&c.doneFlag, 1)
 
 	// notify
+	if c.Request.notifyOnCloseInternal != nil {
+		c.Request.notifyOnCloseInternal <- c
+	}
+
 	if c.Request.NotifyOnClose != nil {
 		c.Request.NotifyOnClose <- c
 	}

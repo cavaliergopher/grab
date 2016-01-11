@@ -206,48 +206,55 @@ func TestAutoResume(t *testing.T) {
 }
 
 func TestBatch(t *testing.T) {
-	tests := 64
-
-	// 8Kb test
-	size := 8192
-	sum := "dc404a613fedaeb54034514bc6505f56b933caa5250299ba7d094377a51caa46"
-
-	// 4Mb test
-	// size := 4194304
-	// sum := "2b07811057df887086f06a67edc6ebf911de8b6741156e7a2eb1416a4b8b1b2e"
-
-	// 128Mb test
-	// size := 134217728
-	// sum := "a626d17da2e502f5b4b8e3ebd23f0bf9daef6255688d8e0bb482b3ae3794a682"
-
+	tests := 256
+	size := 32768
+	sum := "e11360251d1173650cdcd20f111d8f1ca2e412f572e8b36a4dc067121c1799b8"
 	sumb, _ := hex.DecodeString(sum)
 
 	// create requests
-	//done := make(chan *Response, 0)
+	done := make(chan *Response, 0)
 	reqs := make(Requests, tests)
 	for i := 0; i < len(reqs); i++ {
 		reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/request_%d?size=%d", i, size))
 		reqs[i].Filename = fmt.Sprintf(".testBatch.%d", i+1)
-		//reqs[i].NotifyOnClose = done
+		reqs[i].NotifyOnClose = done
 		if err := reqs[i].SetChecksum("sha256", sumb); err != nil {
 			t.Fatal(err.Error())
 		}
 	}
 
 	// batch run
-	//responses := DefaultClient.DoBatch(reqs, 4)
 	responses := DefaultClient.DoBatch(reqs, 4)
 
 	// listen for responses
-	for resp := range responses {
-		// handle errors
-		if resp.Error != nil {
-			t.Errorf("%s: %v", resp.Filename, resp.Error)
-		}
+	for i := 0; i < len(reqs); {
+		select {
+		case resp := <-responses:
+			// monitor download progress
+			if resp.IsComplete() {
+				if resp.Error != nil {
+					fmt.Printf("Error downloading %s: %v\n", resp.Request.URL(), resp.Error)
+				} else {
+					fmt.Printf("Download complete: %s\n", resp.Request.URL())
+				}
+			} else {
+				fmt.Printf("Download started: %s (%d%%)\n", resp.Request.URL(), int(resp.Progress()*100))
+			}
+		case resp := <-done:
+			// handle errors
+			if resp.Error != nil {
+				t.Errorf("%s: %v", resp.Filename, resp.Error)
+			} else {
+				fmt.Printf("Download complete: %s\n", resp.Request.URL())
+			}
 
-		// remove test file
-		if resp.IsComplete() && resp.Error == nil {
-			os.Remove(resp.Filename)
+			// remove test file
+			if resp.IsComplete() && resp.Error == nil {
+				os.Remove(resp.Filename)
+			}
+			i++
+
+		default:
 		}
 	}
 }

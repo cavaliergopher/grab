@@ -51,7 +51,14 @@ type Request struct {
 	// returned.
 	Checksum []byte
 
+	// NotifyOnClose specifies a channel that will notified with a pointer to
+	// the Response when the transfer is completed, either successfully or with
+	// an error.
 	NotifyOnClose chan<- *Response
+
+	// notifyOnCloseInternal is the same as NotifyOnClose but for private
+	// internal use.
+	notifyOnCloseInternal chan *Response
 }
 
 // Requests is a slice of pointers to Request structs.
