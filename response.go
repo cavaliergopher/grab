@@ -85,7 +85,8 @@ func (c *Response) copy() error {
 
 	// download and update progress
 	var buffer [4096]byte
-	for {
+	complete := false
+	for complete == false {
 		// read HTTP stream
 		n, err := c.HTTPResponse.Body.Read(buffer[:])
 		if err != nil && err != io.EOF {
@@ -102,12 +103,14 @@ func (c *Response) copy() error {
 
 		// break when finished
 		if err == io.EOF {
-			break
+			// download is ready for checksum validation
+			c.writer.Close()
+			complete = true
 		}
 	}
 
 	// validate checksum
-	if c.Request.Hash != nil && c.Request.Checksum != nil {
+	if complete && c.Request.Hash != nil && c.Request.Checksum != nil {
 		// open downloaded file
 		if f, err := os.Open(c.Filename); err != nil {
 			return c.close(err)

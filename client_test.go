@@ -47,12 +47,25 @@ func TestMain(m *testing.M) {
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment;filename=\"%s\"", filenamep))
 		}
 
+		// sleep before responding?
+		sleep := 0
+		if sleepp := r.URL.Query().Get("sleep"); sleepp != "" {
+			if _, err := fmt.Sscanf(sleepp, "%d", &sleep); err != nil {
+				panic(err)
+			}
+		}
+
 		// compute offset
 		offset := 0
 		if rangeh := r.Header.Get("Range"); rangeh != "" {
 			if _, err := fmt.Sscanf(rangeh, "bytes=%d-", &offset); err != nil {
 				panic(err)
 			}
+		}
+
+		// delay response
+		if sleep > 0 {
+			time.Sleep(time.Duration(sleep) * time.Millisecond)
 		}
 
 		// set response headers
@@ -300,7 +313,7 @@ func TestBatch(t *testing.T) {
 	}
 
 	// batch run
-	responses := DefaultClient.DoBatch(reqs, 4)
+	responses := DefaultClient.DoBatch(4, reqs)
 
 	// listen for responses
 	for i := 0; i < len(reqs); {

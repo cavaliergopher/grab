@@ -77,15 +77,13 @@ func (c *Client) Do(req *Request) (*Response, error) {
 // Any error which occurs during the file transfer will be set in the returned
 // Response.Error field at the time which it occurs.
 func (c *Client) DoAsync(req *Request) <-chan *Response {
-	r := make(chan *Response, 0)
+	r := make(chan *Response, 1)
 	go func() {
 		// prepare request with HEAD request
 		resp, err := c.do(req)
 		if err == nil && !resp.IsComplete() {
 			// transfer data in new goroutine
-			go func() {
-				resp.copy()
-			}()
+			go resp.copy()
 		}
 
 		r <- resp
@@ -99,12 +97,15 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 // returns a channel to receive the file transfer response contexts. The channel
 // is closed once all responses have been received.
 //
+// If zero is given as the worker count, one worker will be created for each
+// given request.
+//
 // Each response is sent through the channel once the request is initiated via
 // HTTP GET or an error has occurred but before the file transfer begins.
 //
 // Any error which occurs during any of the file transfers will be set in the
 // associated Response.Error field.
-func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
+func (c *Client) DoBatch(workers int, reqs Requests) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
 	responses := make(chan *Response, workers)
@@ -125,6 +126,11 @@ func (c *Client) DoBatch(reqs Requests, workers int) <-chan *Response {
 		}
 		close(responses)
 	}()
+
+	// default one worker per request
+	if workers == 0 {
+		workers = len(reqs)
+	}
 
 	// start workers
 	for i := 0; i < workers; i++ {

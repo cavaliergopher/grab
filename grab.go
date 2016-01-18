@@ -31,6 +31,10 @@ protocol error.
 */
 package grab
 
+import (
+	"os"
+)
+
 // Get tranfers a file from the specified source URL to the given destination
 // path and returns the completed Response context.
 //
@@ -44,6 +48,7 @@ func Get(dst, src string) (*Response, error) {
 
 	req.Filename = dst
 
+	// execute with default client
 	return DefaultClient.Do(req)
 }
 
@@ -70,5 +75,49 @@ func GetAsync(dst, src string) (<-chan *Response, error) {
 
 	req.Filename = dst
 
+	// execute async with default client
 	return DefaultClient.DoAsync(req), nil
+}
+
+// GetBatch executes multiple requests with the given number of workers and
+// returns a channel to receive the file transfer response contexts. The channel
+// is closed once all responses have been received.
+//
+// GetBatch requires that the destination path is an existing directory. If not,
+// an error is returned which may be identified with IsBadDestination.
+//
+// If zero is given as the worker count, one worker will be created for each
+// given request.
+//
+// Each response is sent through the channel once the request is initiated via
+// HTTP GET or an error has occurred but before the file transfer begins.
+//
+// Any error which occurs during any of the file transfers will be set in the
+// associated Response.Error field.
+func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, error) {
+	// check that dst is an existing directory
+	fi, err := os.Stat(dst)
+	if err != nil {
+		return nil, err
+	}
+
+	if !fi.IsDir() {
+		return nil, newGrabError(errBadDestination, "Destination path is not a directory")
+	}
+
+	// build slice of request
+	reqs := make(Requests, len(sources))
+	for i := 0; i < len(sources); i++ {
+		req, err := NewRequest(sources[i])
+		if err != nil {
+			return nil, err
+		}
+
+		req.Filename = dst
+
+		reqs[i] = req
+	}
+
+	// execute batch with default client
+	return DefaultClient.DoBatch(workers, reqs), nil
 }
