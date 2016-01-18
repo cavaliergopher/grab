@@ -105,7 +105,7 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 //
 // Any error which occurs during any of the file transfers will be set in the
 // associated Response.Error field.
-func (c *Client) DoBatch(workers int, reqs Requests) <-chan *Response {
+func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
 	responses := make(chan *Response, workers)

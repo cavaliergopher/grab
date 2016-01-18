@@ -119,5 +119,5 @@ func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, err
 	}
 
 	// execute batch with default client
-	return DefaultClient.DoBatch(workers, reqs), nil
+	return DefaultClient.DoBatch(workers, reqs...), nil
 }
