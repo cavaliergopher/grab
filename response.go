@@ -78,6 +78,24 @@ func (c *Response) Progress() float64 {
 	return float64(atomic.LoadUint64(&c.bytesTransferred)) / float64(c.Size)
 }
 
+// Duration returns the duration of a file transfer. If the transfer is in
+// process, the duration will be between now and the start of the transfer. If
+// the transfer is complete, the duration will be between the start and end of
+// the completed transfer process.
+func (c *Response) Duration() time.Duration {
+	if c.IsComplete() {
+		return c.End.Sub(c.Start)
+	} else {
+		return time.Now().Sub(c.Start)
+	}
+}
+
+// AverageBytesPerSecond returns the average bytes transferred per second over
+// the duration of the file transfer.
+func (c *Response) AverageBytesPerSecond() float64 {
+	return float64(c.BytesTransferred()) / c.Duration().Seconds()
+}
+
 // copy transfers content for a HTTP connection established via Client.do()
 func (c *Response) copy() error {
 	// close writer when finished
