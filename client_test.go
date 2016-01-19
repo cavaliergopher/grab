@@ -313,7 +313,7 @@ func TestBatch(t *testing.T) {
 	}
 
 	// batch run
-	responses := DefaultClient.DoBatch(4, reqs)
+	responses := DefaultClient.DoBatch(4, reqs...)
 
 	// listen for responses
 	for i := 0; i < len(reqs); {
