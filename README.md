@@ -4,6 +4,8 @@
 
 *Downloading the internet, one go routine at a time!*
 
+	$ go get github.com/cavaliercoder/grab
+
 Grab is a Go package for downloading files from the internet with the following
 rad features:
 
@@ -20,6 +22,12 @@ http://cavaliercoder.com/blog/downloading-large-files-in-go.html
 
 ## Example
 
+The following code can be used to create a cut-down 'wget'-like binary which
+simply downloads each URL given on the command line to the current working
+directory.
+
+Files are downloaded three at a time with progress updates printed periodically.
+
 ```go
 package main
 
@@ -31,7 +39,7 @@ import (
 )
 
 func main() {
-	// get URL to download from command args
+	// validate command args
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s url [url]...\n", os.Args[0])
 		os.Exit(1)
@@ -41,7 +49,7 @@ func main() {
 	client := grab.NewClient()
 	client.UserAgent = "Grab example"
 
-	// create requests from command arguments
+	// create request for each URL given on the command line
 	reqs := make(grab.Requests, 0)
 	for _, url := range os.Args[1:] {
 		req, err := grab.NewRequest(url)
