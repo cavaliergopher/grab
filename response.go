@@ -10,10 +10,12 @@ import (
 	"time"
 )
 
-// Response represents the response from an HTTP transfer request.
+// Response represents the response to a completed or in-process download
+// request.
 //
 // For asyncronous operations, the Response also provides context for the file
-// transfer while it is process.
+// transfer while it is process. All functions are safe to use from multiple
+// go-routines.
 type Response struct {
 	// The Request that was sent to obtain this Response.
 	Request *Request
@@ -62,7 +64,7 @@ func (c *Response) IsComplete() bool {
 	return atomic.LoadInt32(&c.doneFlag) > 0
 }
 
-// BytesTransferred atomically returns the number of bytes which have already been
+// BytesTransferred returns the number of bytes which have already been
 // downloaded.
 func (c *Response) BytesTransferred() uint64 {
 	return atomic.LoadUint64(&c.bytesTransferred)

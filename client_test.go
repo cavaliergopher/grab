@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -332,8 +333,58 @@ func TestBatch(t *testing.T) {
 				os.Remove(resp.Filename)
 			}
 			i++
-
-		default:
 		}
+	}
+}
+
+func TestCancel(t *testing.T) {
+	client := NewClient()
+
+	// slow request (3000ms)
+	req, _ := NewRequest(ts.URL + "/.testCancel?sleep=2000")
+	ch := client.DoAsync(req)
+
+	// sleep and cancel
+	time.Sleep(500 * time.Millisecond)
+	client.CancelRequest(req)
+
+	// wait for response
+	resp := <-ch
+
+	// validate error
+	if resp.Error == nil || !strings.Contains(resp.Error.Error(), "request canceled") {
+		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Error)
+	}
+}
+
+func TestCancelInProcess(t *testing.T) {
+	client := NewClient()
+
+	// slow request (3000ms)
+	req, _ := NewRequest(ts.URL + "/.testCancelInProcess?size=134217728")
+	done := make(chan *Response)
+	req.NotifyOnClose = done
+
+	resp := <-client.DoAsync(req)
+
+	// wait until some data is transferred
+	for resp.BytesTransferred() < 1048576 {
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// cancel request
+	client.CancelRequest(req)
+
+	// wait for closure
+	<-done
+
+	// validate error
+	if resp.Error == nil || !strings.Contains(resp.Error.Error(), "request canceled") {
+		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Error)
+	}
+
+	// delete downloaded file
+	if err := os.Remove(resp.Filename); err != nil {
+		t.Errorf("Error deleting test file: %v", err)
 	}
 }

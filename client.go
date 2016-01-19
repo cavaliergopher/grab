@@ -23,6 +23,8 @@ type Client struct {
 
 	// UserAgent specifies the User-Agent string which will be set in the
 	// headers of all requests made by this client.
+	//
+	// The user agent string may be overridden in the headers of each request.
 	UserAgent string
 }
 
@@ -41,6 +43,14 @@ func NewClient() *Client {
 
 // DefaultClient is the default client and is used by Get.
 var DefaultClient = NewClient()
+
+// CancelRequest cancels an in-flight request by closing its connection.
+// CancelRequest should only be called after a Response is returned.
+func (c *Client) CancelRequest(req *Request) {
+	if t, ok := c.HTTPClient.Transport.(*http.Transport); ok {
+		t.CancelRequest(req.HTTPRequest)
+	}
+}
 
 // Do sends a file transfer request and returns a file transfer response
 // context, following policy (e.g. redirects, cookies, auth) as configured on
