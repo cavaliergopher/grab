@@ -93,13 +93,13 @@ func (c *Response) copy() error {
 			return c.close(err)
 		}
 
-		// increment progress
-		atomic.AddUint64(&c.bytesTransferred, uint64(n))
-
 		// write to file
 		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
 			return c.close(werr)
 		}
+
+		// increment progress
+		atomic.AddUint64(&c.bytesTransferred, uint64(n))
 
 		// break when finished
 		if err == io.EOF {
