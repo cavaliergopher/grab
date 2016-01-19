@@ -21,24 +21,30 @@ type Response struct {
 	Request *Request
 
 	// HTTPResponse specifies the HTTP response received from the remote server.
-	// The response's Body is nil (having already been consumed).
+	//
+	// The response Body should not be used as it will be consumed and closed by
+	// grab.
 	HTTPResponse *http.Response
 
 	// Filename specifies the path where the file transfer is stored in local
 	// storage.
 	Filename string
 
-	// Size specifies the total size of the file transfer.
+	// Size specifies the total expected size of the file transfer.
 	Size uint64
 
-	// Error specifies any error that may have occurred during the file transfer
-	// that created this response.
+	// Error specifies any error that may have occurred during the file
+	// transfer.
+	//
+	// This should not be read until IsComplete returns true.
 	Error error
 
 	// Start specifies the time at which the file transfer started.
 	Start time.Time
 
 	// End specifies the time at which the file transfer completed.
+	//
+	// This should not be read until IsComplete returns true.
 	End time.Time
 
 	// DidResume specifies that the file transfer resumed a previously
@@ -65,19 +71,21 @@ func (c *Response) IsComplete() bool {
 }
 
 // BytesTransferred returns the number of bytes which have already been
-// downloaded.
+// downloaded, including any data used to resume a previous download.
 func (c *Response) BytesTransferred() uint64 {
 	return atomic.LoadUint64(&c.bytesTransferred)
 }
 
 // Progress returns the ratio of bytes which have already been downloaded over
-// the total content length as a fraction of 1.00.
+// the total file size as a fraction of 1.00.
+//
+// Multiply the returned value by 100 to return the percentage completed.
 func (c *Response) Progress() float64 {
 	if c.Size == 0 {
 		return 0
 	}
 
-	return float64(atomic.LoadUint64(&c.bytesTransferred)) / float64(c.Size)
+	return float64(c.BytesTransferred()) / float64(c.Size)
 }
 
 // Duration returns the duration of a file transfer. If the transfer is in
@@ -95,6 +103,7 @@ func (c *Response) Duration() time.Duration {
 // AverageBytesPerSecond returns the average bytes transferred per second over
 // the duration of the file transfer.
 func (c *Response) AverageBytesPerSecond() float64 {
+	// TODO: Fix bad AvgBytesPerSec reading for resumed downloads
 	return float64(c.BytesTransferred()) / c.Duration().Seconds()
 }
 
@@ -124,6 +133,7 @@ func (c *Response) copy() error {
 		// break when finished
 		if err == io.EOF {
 			// download is ready for checksum validation
+			c.HTTPResponse.Body.Close()
 			c.writer.Close()
 			complete = true
 		}
@@ -156,15 +166,21 @@ func (c *Response) copy() error {
 		}
 	}
 
+	// finalize
 	return c.close(nil)
 }
 
 // close finalizes the response context
 func (c *Response) close(err error) error {
-	// close any file handle
+	// close writer
 	if c.writer != nil {
 		c.writer.Close()
 		c.writer = nil
+	}
+
+	// close response body
+	if c.HTTPResponse != nil && c.HTTPResponse.Body != nil {
+		c.HTTPResponse.Body.Close()
 	}
 
 	// set result error (if any)

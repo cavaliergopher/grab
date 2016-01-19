@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// A Client is an HTTP file transfer client. Its zero value is a usable client
-// that uses http.Client defaults.
+// A Client is a file download client.
 //
 // Clients are safe for concurrent use by multiple goroutines.
 type Client struct {
@@ -28,8 +27,7 @@ type Client struct {
 	UserAgent string
 }
 
-// NewClient returns a new file transfer Client, using default transport
-// configuration.
+// NewClient returns a new file download Client, using default configuration.
 func NewClient() *Client {
 	return &Client{
 		UserAgent: "grab",
@@ -41,11 +39,11 @@ func NewClient() *Client {
 	}
 }
 
-// DefaultClient is the default client and is used by Get.
+// DefaultClient is the default client and is used by all Get convenience
+// functions.
 var DefaultClient = NewClient()
 
 // CancelRequest cancels an in-flight request by closing its connection.
-// CancelRequest should only be called after a Response is returned.
 func (c *Client) CancelRequest(req *Request) {
 	if t, ok := c.HTTPClient.Transport.(*http.Transport); ok {
 		t.CancelRequest(req.HTTPRequest)
@@ -58,6 +56,10 @@ func (c *Client) CancelRequest(req *Request) {
 //
 // An error is returned if caused by client policy (such as CheckRedirect), or
 // if there was an HTTP protocol error.
+//
+// Do is a synchronous, blocking operation which returns only once a download
+// request is completed or fails. For non-blocking operations which enable the
+// monitoring of transfers in process, see DoAsync and DoBatch.
 func (c *Client) Do(req *Request) (*Response, error) {
 	// prepare request with HEAD request
 	resp, err := c.do(req)
@@ -81,11 +83,11 @@ func (c *Client) Do(req *Request) (*Response, error) {
 // The Response is sent via the returned channel and the channel closed as soon
 // as the HTTP/1.1 GET request has been served; before the file transfer begins.
 //
-// The Response may then be used to gauge the progress of the file transfer
+// The Response may then be used to monitor the progress of the file transfer
 // while it is in process.
 //
 // Any error which occurs during the file transfer will be set in the returned
-// Response.Error field at the time which it occurs.
+// Response.Error field as soon as the Response.IsComplete method returns true.
 func (c *Client) DoAsync(req *Request) <-chan *Response {
 	r := make(chan *Response, 1)
 	go func() {
@@ -104,17 +106,19 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 }
 
 // DoBatch executes multiple requests with the given number of workers and
-// returns a channel to receive the file transfer response contexts. The channel
-// is closed once all responses have been received.
+// immediately returns a channel to receive the Responses as they become
+// available. Excess requests are queued until a worker becomes available. The
+// channel is closed once all responses have been sent.
 //
 // If zero is given as the worker count, one worker will be created for each
-// given request.
+// given request and all requests will start at the same time.
 //
 // Each response is sent through the channel once the request is initiated via
-// HTTP GET or an error has occurred but before the file transfer begins.
+// HTTP GET or an error has occurred, but before the file transfer begins.
 //
 // Any error which occurs during any of the file transfers will be set in the
-// associated Response.Error field.
+// associated Response.Error field as soon as the Response.IsComplete method
+// returns true.
 func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 

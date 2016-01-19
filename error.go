@@ -4,6 +4,7 @@ import (
 	"fmt"
 )
 
+// error codes
 const (
 	errBadLength = iota
 	errNoFilename
@@ -42,15 +43,15 @@ func isErrorType(err error, code int) bool {
 }
 
 // IsContentLengthMismatch returns a boolean indicating whether the error is
-// known to report that a HTTP request response indicated that the requested
-// file is not the expected length.
+// known to report that a HTTP response indicated that the requested file is not
+// the expected length.
 func IsContentLengthMismatch(err error) bool {
 	return isErrorType(err, errBadLength)
 }
 
 // IsNoFilename returns a boolean indicating whether the error is known to
 // report that a destination filename could not be determined from the
-// Content-Disposition headers of a HTTP response or the request URL's path.
+// Content-Disposition headers of a HTTP response or the requested URL path.
 func IsNoFilename(err error) bool {
 	return isErrorType(err, errNoFilename)
 }

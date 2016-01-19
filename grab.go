@@ -18,16 +18,6 @@ partial file. If the server does not support resumed downloads, the file will be
 retransferred in its entirety. If the file is already complete, grab will return
 successfully.
 
-If any HTTP response is one of the following redirect codes, grab follows the
-redirect, up to a maximum of 10 redirects:
-
-	301 (Moved Permanently)
-	302 (Found)
-	303 (See Other)
-	307 (Temporary Redirect)
-
-An error is returned if there were too many redirects or if there was an HTTP
-protocol error.
 */
 package grab
 
@@ -35,10 +25,18 @@ import (
 	"os"
 )
 
-// Get tranfers a file from the specified source URL to the given destination
-// path and returns the completed Response context.
+// Get sends a file transfer request and returns a file transfer response
+// context, following policy (e.g. redirects, cookies, auth) as configured on
+// the client's HTTPClient.
 //
-// To make a request with custom headers, use NewRequest and DefaultClient.Do.
+// An error is returned if caused by client policy (such as CheckRedirect), or
+// if there was an HTTP protocol error.
+//
+// Get is a synchronous, blocking operation which returns only once a download
+// request is completed or fails. For non-blocking operations which enable the
+// monitoring of transfers in process, see GetAsync, GetBatch or use a Client.
+//
+// Get is a wrapper for DefaultClient.Do.
 func Get(dst, src string) (*Response, error) {
 	// init client and request
 	req, err := NewRequest(src)
@@ -52,20 +50,19 @@ func Get(dst, src string) (*Response, error) {
 	return DefaultClient.Do(req)
 }
 
-// GetAsync tranfers a file from the specified source URL to the given
-// destination path and returns the Response context.
+// GetAsync sends a file transfer request and returns a channel to receive the
+// file transfer response context.
 //
-// The Response is returned as soon as a HTTP/1.1 HEAD request has completed to
-// determine the size of the requested file and supported server features.
+// The Response is sent via the returned channel and the channel closed as soon
+// as the HTTP/1.1 GET request has been served; before the file transfer begins.
 //
-// The Response may then be used to gauge the progress of the file transfer
+// The Response may then be used to monitor the progress of the file transfer
 // while it is in process.
 //
-// If an error occurs while initializing the request, it will be returned
-// immediately. Any error which occurs during the file transfer will instead be
-// set on the returned Response at the time which it occurs.
+// Any error which occurs during the file transfer will be set in the returned
+// Response.Error field as soon as the Response.IsComplete method returns true.
 //
-// To make a request with custom headers, use NewRequest and DefaultClient.Do.
+// GetAsync is a wrapper for DefaultClient.DoAsync.
 func GetAsync(dst, src string) (<-chan *Response, error) {
 	// init client and request
 	req, err := NewRequest(src)
@@ -80,20 +77,24 @@ func GetAsync(dst, src string) (<-chan *Response, error) {
 }
 
 // GetBatch executes multiple requests with the given number of workers and
-// returns a channel to receive the file transfer response contexts. The channel
-// is closed once all responses have been received.
+// immediately returns a channel to receive the Responses as they become
+// available. Excess requests are queued until a worker becomes available. The
+// channel is closed once all responses have been sent.
 //
 // GetBatch requires that the destination path is an existing directory. If not,
 // an error is returned which may be identified with IsBadDestination.
 //
 // If zero is given as the worker count, one worker will be created for each
-// given request.
+// given request and all requests will start at the same time.
 //
 // Each response is sent through the channel once the request is initiated via
-// HTTP GET or an error has occurred but before the file transfer begins.
+// HTTP GET or an error has occurred, but before the file transfer begins.
 //
 // Any error which occurs during any of the file transfers will be set in the
-// associated Response.Error field.
+// associated Response.Error field as soon as the Response.IsComplete method
+// returns true.
+//
+// GetBatch is a wrapper for DefaultClient.GetBatch.
 func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, error) {
 	// check that dst is an existing directory
 	fi, err := os.Stat(dst)
@@ -106,7 +107,7 @@ func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, err
 	}
 
 	// build slice of request
-	reqs := make(Requests, len(sources))
+	reqs := make([]*Request, len(sources))
 	for i := 0; i < len(sources); i++ {
 		req, err := NewRequest(sources[i])
 		if err != nil {

@@ -176,6 +176,8 @@ func TestChecksums(t *testing.T) {
 	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false)
 }
 
+// testSize executes a request and asserts that the file size for the downloaded
+// file does or does not match the expected size.
 func testSize(t *testing.T, url string, size uint64, match bool) {
 	req, _ := NewRequest(url)
 	req.Filename = ".testSize-mismatch-head"
@@ -201,6 +203,7 @@ func testSize(t *testing.T, url string, size uint64, match bool) {
 	}
 }
 
+// TestSize exeuctes a number of size tests via testSize.
 func TestSize(t *testing.T) {
 	size := uint64(32768)
 
@@ -220,6 +223,7 @@ func TestSize(t *testing.T) {
 	// TODO: testSize(t, ts.URL+fmt.Sprintf("?nocl&size=%d", size), size, false)
 }
 
+// TestAutoResume tests segmented downloading of a large file.
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
@@ -294,6 +298,8 @@ func TestAutoResume(t *testing.T) {
 	}
 }
 
+// TestBatch executes multiple requests simultaneously and validates the
+// responses.
 func TestBatch(t *testing.T) {
 	tests := 256
 	size := 32768
@@ -302,7 +308,7 @@ func TestBatch(t *testing.T) {
 
 	// create requests
 	done := make(chan *Response, 0)
-	reqs := make(Requests, tests)
+	reqs := make([]*Request, tests)
 	for i := 0; i < len(reqs); i++ {
 		reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/request_%d?size=%d", i, size))
 		reqs[i].Label = fmt.Sprintf("Test %d", i+1)
@@ -337,14 +343,16 @@ func TestBatch(t *testing.T) {
 	}
 }
 
+// TestCancel validates that a request can be successfully cancelled before a
+// file transfer starts.
 func TestCancel(t *testing.T) {
 	client := NewClient()
 
-	// slow request (3000ms)
+	// slow request
 	req, _ := NewRequest(ts.URL + "/.testCancel?sleep=2000")
 	ch := client.DoAsync(req)
 
-	// sleep and cancel
+	// sleep and cancel before request is served
 	time.Sleep(500 * time.Millisecond)
 	client.CancelRequest(req)
 
@@ -357,10 +365,12 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+// TestCancelInProcess validates that a request can be successfully cancelled
+// after a file transfer has started.
 func TestCancelInProcess(t *testing.T) {
 	client := NewClient()
 
-	// slow request (3000ms)
+	// large file request
 	req, _ := NewRequest(ts.URL + "/.testCancelInProcess?size=134217728")
 	done := make(chan *Response)
 	req.NotifyOnClose = done
