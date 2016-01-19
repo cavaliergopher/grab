@@ -3,6 +3,12 @@ Package grab provides a HTTP client implementation specifically geared for
 downloading large files with progress feedback, pause and resume and checksum
 validation features.
 
+For a full walkthrough, see:
+http://cavaliercoder.com/blog/downloading-large-files-in-go.html
+
+Please log any issues at:
+https://github.com/cavaliercoder/grab/issues
+
 If the given destination path for a transfer request is a directory, the file
 transfer will be stored in that directory and the file's name will be determined
 using Content-Disposition headers in the server's response or from the last
