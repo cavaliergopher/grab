@@ -360,7 +360,8 @@ func TestCancel(t *testing.T) {
 	resp := <-ch
 
 	// validate error
-	if resp.Error == nil || !strings.Contains(resp.Error.Error(), "request canceled") {
+	if resp.Error == nil ||
+		!(strings.Contains(resp.Error.Error(), "request canceled") || strings.Contains(resp.Error.Error(), "use of closed network connection")) {
 		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Error)
 	}
 }
@@ -389,7 +390,8 @@ func TestCancelInProcess(t *testing.T) {
 	<-done
 
 	// validate error
-	if resp.Error == nil || !strings.Contains(resp.Error.Error(), "request canceled") {
+	if resp.Error == nil ||
+		!(strings.Contains(resp.Error.Error(), "request canceled") || strings.Contains(resp.Error.Error(), "use of closed network connection")) {
 		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Error)
 	}
 
