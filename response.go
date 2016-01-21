@@ -55,6 +55,10 @@ type Response struct {
 	// storage
 	writer io.WriteCloser
 
+	// bytesCompleted specifies the number of bytes which were already
+	// transferred before this transfer began.
+	bytesResumed uint64
+
 	// bytesTransferred specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
 	bytesTransferred uint64
@@ -100,11 +104,38 @@ func (c *Response) Duration() time.Duration {
 	}
 }
 
+// ETA returns the estimated time at which the the download will complete. If
+// the transfer has already complete, the actual end time will be returned.
+func (c *Response) ETA() time.Time {
+	if c.IsComplete() {
+		return c.End
+	} else {
+		// total progress through transfer
+		transferred := c.BytesTransferred()
+		if transferred == 0 {
+			return time.Time{}
+		}
+
+		// bytes remaining
+		remainder := c.Size - transferred
+
+		// time elapsed
+		duration := time.Now().Sub(c.Start)
+
+		// average bytes per second for transfer
+		bps := float64(transferred-c.bytesResumed) / duration.Seconds()
+
+		// estimated seconds remaining
+		secs := float64(remainder) / bps
+
+		return time.Now().Add(time.Duration(secs) * time.Second)
+	}
+}
+
 // AverageBytesPerSecond returns the average bytes transferred per second over
 // the duration of the file transfer.
 func (c *Response) AverageBytesPerSecond() float64 {
-	// TODO: Fix bad AvgBytesPerSec reading for resumed downloads
-	return float64(c.BytesTransferred()) / c.Duration().Seconds()
+	return float64(c.BytesTransferred()-c.bytesResumed) / c.Duration().Seconds()
 }
 
 // copy transfers content for a HTTP connection established via Client.do()

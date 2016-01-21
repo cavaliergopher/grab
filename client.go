@@ -289,6 +289,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 					// set byte range in next request
 					if fi.Size() > 0 {
+						resp.bytesResumed = uint64(fi.Size())
 						req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
 					}
 				}
