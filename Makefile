@@ -1,4 +1,3 @@
-
 GO = go
 
 all: test lint
@@ -13,6 +12,8 @@ test:
 	$(GO) test -v -cover
 
 lint:
+	gofmt -l -e -s . || :
+	go vet . || :
 	golint . || :
 	gocyclo -over 15 . || :
 	misspell ./* || :
