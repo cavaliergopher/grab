@@ -1,6 +1,6 @@
 # grab
 
-[![Build Status](https://travis-ci.org/cavaliercoder/grab.svg)](https://travis-ci.org/cavaliercoder/grab) [![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab)
+[![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab) [![Build Status](https://travis-ci.org/cavaliercoder/grab.svg)](https://travis-ci.org/cavaliercoder/grab) [![Go Report Card](https://goreportcard.com/badge/github.com/cavaliercoder/grab)](https://goreportcard.com/report/github.com/cavaliercoder/grab)
 
 *Downloading the internet, one go routine at a time!*
 
