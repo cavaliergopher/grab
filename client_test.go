@@ -1,94 +1,14 @@
 package grab
 
 import (
-	"bufio"
 	"encoding/hex"
 	"fmt"
 	"github.com/djherbis/times"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
-
-// ts is the test HTTP server instance initiated by TestMain().
-var ts *httptest.Server
-
-// TestMail starts a HTTP test server for all test cases to use as a download
-// source.
-func TestMain(m *testing.M) {
-	// start test HTTP server
-	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// allow HEAD requests?
-		if _, ok := r.URL.Query()["nohead"]; ok && r.Method == "HEAD" {
-			http.Error(w, "HEAD method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// compute transfer size from 'size' parameter (default 1Mb)
-		size := 1048576
-		if sizep := r.URL.Query().Get("size"); sizep != "" {
-			if _, err := fmt.Sscanf(sizep, "%d", &size); err != nil {
-				panic(err)
-			}
-		}
-
-		// support ranged requests (default yes)?
-		ranged := true
-		if rangep := r.URL.Query().Get("ranged"); rangep != "" {
-			if _, err := fmt.Sscanf(rangep, "%t", &ranged); err != nil {
-				panic(err)
-			}
-		}
-
-		// set filename in headers (default no)?
-		if filenamep := r.URL.Query().Get("filename"); filenamep != "" {
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment;filename=\"%s\"", filenamep))
-		}
-
-		// sleep before responding?
-		sleep := 0
-		if sleepp := r.URL.Query().Get("sleep"); sleepp != "" {
-			if _, err := fmt.Sscanf(sleepp, "%d", &sleep); err != nil {
-				panic(err)
-			}
-		}
-
-		// compute offset
-		offset := 0
-		if rangeh := r.Header.Get("Range"); rangeh != "" {
-			if _, err := fmt.Sscanf(rangeh, "bytes=%d-", &offset); err != nil {
-				panic(err)
-			}
-		}
-
-		// delay response
-		if sleep > 0 {
-			time.Sleep(time.Duration(sleep) * time.Millisecond)
-		}
-
-		// set response headers
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", size-offset))
-		w.Header().Set("Accept-Ranges", "bytes")
-
-		// serve content body if method == "GET"
-		if r.Method == "GET" {
-			// write to stream
-			bw := bufio.NewWriterSize(w, 4096)
-			for i := offset; i < size; i++ {
-				bw.Write([]byte{byte(i)})
-			}
-			bw.Flush()
-		}
-	}))
-
-	defer ts.Close()
-
-	// run tests
-	os.Exit(m.Run())
-}
 
 // testFilename executes a request and asserts that the downloaded filename
 // matches the given filename.
