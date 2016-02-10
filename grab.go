@@ -102,6 +102,11 @@ func GetAsync(dst, src string) (<-chan *Response, error) {
 //
 // GetBatch is a wrapper for DefaultClient.GetBatch.
 func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, error) {
+	// default to current working directory
+	if dst == "" {
+		dst = "."
+	}
+
 	// check that dst is an existing directory
 	fi, err := os.Stat(dst)
 	if err != nil {

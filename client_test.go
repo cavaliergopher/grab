@@ -345,10 +345,14 @@ func TestSkipExisting(t *testing.T) {
 	defer os.Remove(filename)
 
 	// download a file
-	Get(filename, ts.URL)
+	req, _ := NewRequest(ts.URL)
+	req.Filename = filename
+	DefaultClient.Do(req)
 
 	// redownload
-	resp, _ := Get(filename, ts.URL)
+	req, _ = NewRequest(ts.URL)
+	req.Filename = filename
+	resp, _ := DefaultClient.Do(req)
 
 	// ensure download was resumed
 	if !resp.DidResume {
@@ -361,7 +365,7 @@ func TestSkipExisting(t *testing.T) {
 	}
 
 	// ensure checksum is performed on pre-existing file
-	req, _ := NewRequest(ts.URL)
+	req, _ = NewRequest(ts.URL)
 	req.Filename = filename
 	sum, _ := hex.DecodeString("badd")
 	req.SetChecksum("sha256", sum)
