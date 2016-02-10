@@ -181,6 +181,7 @@ func (c *Response) copy() error {
 	return c.close(nil)
 }
 
+// checksum validates a completed file transfer.
 func (c *Response) checksum() error {
 	// no error if hash not set
 	if c.Request.Hash == nil || c.Request.Checksum == nil {

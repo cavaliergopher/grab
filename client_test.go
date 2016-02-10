@@ -148,17 +148,20 @@ func TestWithNoFilename(t *testing.T) {
 
 // testChecksum executes a request and asserts that the computed checksum for
 // the downloaded file does or does not match the expected checksum.
-func testChecksum(t *testing.T, size int, sum string, match bool) {
+func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
+	filename := fmt.Sprintf(".testChecksum-%s-%s", algorithm, sum[:8])
+	defer os.Remove(filename)
+
 	// create request
 	req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", size))
-	req.Filename = fmt.Sprintf(".testChecksum-%s", sum)
+	req.Filename = filename
 
 	// set expected checksum
 	sumb, _ := hex.DecodeString(sum)
-	req.SetChecksum("sha256", sumb)
+	req.SetChecksum(algorithm, sumb)
 
 	// fetch
-	resp, err := DefaultClient.Do(req)
+	_, err := DefaultClient.Do(req)
 	if err != nil {
 		if !IsChecksumMismatch(err) {
 			t.Errorf("Error in Client.Do(): %v", err)
@@ -166,25 +169,57 @@ func testChecksum(t *testing.T, size int, sum string, match bool) {
 			t.Errorf("%v (%v bytes)", err, size)
 		}
 	} else if !match {
-		t.Errorf("Expected checksum mismatch but comparison succeeded (%v bytes)", size)
-	}
-
-	// delete downloaded file
-	if err := os.Remove(resp.Filename); err != nil {
-		t.Errorf("Error deleting test file: %v", err)
+		t.Errorf("Expected checksum mismatch but comparison succeeded (%s %v bytes)", algorithm, size)
 	}
 }
 
 // TestChecksums executes a number of checksum tests via testChecksum.
 func TestChecksums(t *testing.T) {
-	testChecksum(t, 128, "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true)
-	testChecksum(t, 128, "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false)
+	// test md5
+	testChecksum(t, 128, "md5", "37eff01866ba3f538421b30b7cbefcac", true)
+	testChecksum(t, 128, "md5", "37eff01866ba3f538421b30b7cbefcad", false)
 
-	testChecksum(t, 1024, "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true)
-	testChecksum(t, 1024, "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false)
+	testChecksum(t, 1024, "md5", "b2ea9f7fcea831a4a63b213f41a8855b", true)
+	testChecksum(t, 1024, "md5", "b2ea9f7fcea831a4a63b213f41a8855c", false)
 
-	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true)
-	testChecksum(t, 1048576, "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false)
+	testChecksum(t, 1048576, "md5", "c35cc7d8d91728a0cb052831bc4ef372", true)
+	testChecksum(t, 1048576, "md5", "c35cc7d8d91728a0cb052831bc4ef373", false)
+
+	// test sha1
+	testChecksum(t, 128, "sha1", "e6434bc401f98603d7eda504790c98c67385d535", true)
+	testChecksum(t, 128, "sha1", "e6434bc401f98603d7eda504790c98c67385d536", false)
+
+	testChecksum(t, 1024, "sha1", "5b00669c480d5cffbdfa8bdba99561160f2d1b77", true)
+	testChecksum(t, 1024, "sha1", "5b00669c480d5cffbdfa8bdba99561160f2d1b78", false)
+
+	testChecksum(t, 1048576, "sha1", "ecfc8e86fdd83811f9cc9bf500993b63069923be", true)
+	testChecksum(t, 1048576, "sha1", "ecfc8e86fdd83811f9cc9bf500993b63069923bf", false)
+
+	// test sha256
+	testChecksum(t, 128, "sha256", "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true)
+	testChecksum(t, 128, "sha256", "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false)
+
+	testChecksum(t, 1024, "sha256", "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true)
+	testChecksum(t, 1024, "sha256", "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false)
+
+	testChecksum(t, 1048576, "sha256", "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true)
+	testChecksum(t, 1048576, "sha256", "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false)
+
+	// test sha512
+	testChecksum(t, 128, "sha512", "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f7", true)
+	testChecksum(t, 128, "sha512", "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f8", false)
+
+	testChecksum(t, 1024, "sha512", "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566c", true)
+	testChecksum(t, 1024, "sha512", "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566d", false)
+
+	testChecksum(t, 1048576, "sha512", "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", true)
+	testChecksum(t, 1048576, "sha512", "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67a0", false)
+
+	// check unsupported
+	req, _ := NewRequest(ts.URL)
+	if err := req.SetChecksum("bad", []byte{}); err == nil {
+		t.Fatalf("Expected error for unsupported hash type, got %v", err)
+	}
 }
 
 // testSize executes a request and asserts that the file size for the downloaded
