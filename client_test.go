@@ -301,44 +301,47 @@ func TestAutoResume(t *testing.T) {
 // TestBatch executes multiple requests simultaneously and validates the
 // responses.
 func TestBatch(t *testing.T) {
-	tests := 256
+	tests := 32
 	size := 32768
 	sum := "e11360251d1173650cdcd20f111d8f1ca2e412f572e8b36a4dc067121c1799b8"
 	sumb, _ := hex.DecodeString(sum)
 
-	// create requests
-	done := make(chan *Response, 0)
-	reqs := make([]*Request, tests)
-	for i := 0; i < len(reqs); i++ {
-		reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/request_%d?size=%d", i, size))
-		reqs[i].Label = fmt.Sprintf("Test %d", i+1)
-		reqs[i].Filename = fmt.Sprintf(".testBatch.%d", i+1)
-		reqs[i].NotifyOnClose = done
-		if err := reqs[i].SetChecksum("sha256", sumb); err != nil {
-			t.Fatal(err.Error())
+	// test with 4 workers and with one per request
+	for _, workerCount := range []int{4, 0} {
+		// create requests
+		done := make(chan *Response, 0)
+		reqs := make([]*Request, tests)
+		for i := 0; i < len(reqs); i++ {
+			reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/request_%d?size=%d&sleep=10", i, size))
+			reqs[i].Label = fmt.Sprintf("Test %d", i+1)
+			reqs[i].Filename = fmt.Sprintf(".testBatch.%d", i+1)
+			reqs[i].NotifyOnClose = done
+			if err := reqs[i].SetChecksum("sha256", sumb); err != nil {
+				t.Fatal(err.Error())
+			}
 		}
-	}
 
-	// batch run
-	responses := DefaultClient.DoBatch(4, reqs...)
+		// batch run
+		responses := DefaultClient.DoBatch(workerCount, reqs...)
 
-	// listen for responses
-	for i := 0; i < len(reqs); {
-		select {
-		case <-responses:
-			// swallow responses channel for newly initiated responses
+		// listen for responses
+		for i := 0; i < len(reqs); {
+			select {
+			case <-responses:
+				// swallow responses channel for newly initiated responses
 
-		case resp := <-done:
-			// handle errors
-			if resp.Error != nil {
-				t.Errorf("%s: %v", resp.Filename, resp.Error)
+			case resp := <-done:
+				// handle errors
+				if resp.Error != nil {
+					t.Errorf("%s: %v", resp.Filename, resp.Error)
+				}
+
+				// remove test file
+				if resp.IsComplete() && resp.Error == nil {
+					os.Remove(resp.Filename)
+				}
+				i++
 			}
-
-			// remove test file
-			if resp.IsComplete() && resp.Error == nil {
-				os.Remove(resp.Filename)
-			}
-			i++
 		}
 	}
 }
