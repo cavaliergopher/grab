@@ -53,6 +53,25 @@ func TestMain(m *testing.M) {
 			}
 		}
 
+		// throttle rate to n bps
+		rate := 0 // bps
+		var throttle *time.Ticker
+		defer func() {
+			if throttle != nil {
+				throttle.Stop()
+			}
+		}()
+
+		if ratep := r.URL.Query().Get("rate"); ratep != "" {
+			if _, err := fmt.Sscanf(ratep, "%d", &rate); err != nil {
+				panic(err)
+			}
+
+			if rate > 0 {
+				throttle = time.NewTicker(time.Second / time.Duration(rate))
+			}
+		}
+
 		// compute offset
 		offset := 0
 		if rangeh := r.Header.Get("Range"); rangeh != "" {
@@ -76,6 +95,10 @@ func TestMain(m *testing.M) {
 			bw := bufio.NewWriterSize(w, 4096)
 			for i := offset; i < size; i++ {
 				bw.Write([]byte{byte(i)})
+
+				if throttle != nil {
+					<-throttle.C
+				}
 			}
 			bw.Flush()
 		}
