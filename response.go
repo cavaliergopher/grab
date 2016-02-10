@@ -99,9 +99,9 @@ func (c *Response) Progress() float64 {
 func (c *Response) Duration() time.Duration {
 	if c.IsComplete() {
 		return c.End.Sub(c.Start)
-	} else {
-		return time.Now().Sub(c.Start)
 	}
+
+	return time.Now().Sub(c.Start)
 }
 
 // ETA returns the estimated time at which the the download will complete. If
@@ -109,27 +109,27 @@ func (c *Response) Duration() time.Duration {
 func (c *Response) ETA() time.Time {
 	if c.IsComplete() {
 		return c.End
-	} else {
-		// total progress through transfer
-		transferred := c.BytesTransferred()
-		if transferred == 0 {
-			return time.Time{}
-		}
-
-		// bytes remaining
-		remainder := c.Size - transferred
-
-		// time elapsed
-		duration := time.Now().Sub(c.Start)
-
-		// average bytes per second for transfer
-		bps := float64(transferred-c.bytesResumed) / duration.Seconds()
-
-		// estimated seconds remaining
-		secs := float64(remainder) / bps
-
-		return time.Now().Add(time.Duration(secs) * time.Second)
 	}
+
+	// total progress through transfer
+	transferred := c.BytesTransferred()
+	if transferred == 0 {
+		return time.Time{}
+	}
+
+	// bytes remaining
+	remainder := c.Size - transferred
+
+	// time elapsed
+	duration := time.Now().Sub(c.Start)
+
+	// average bytes per second for transfer
+	bps := float64(transferred-c.bytesResumed) / duration.Seconds()
+
+	// estimated seconds remaining
+	secs := float64(remainder) / bps
+
+	return time.Now().Add(time.Duration(secs) * time.Second)
 }
 
 // AverageBytesPerSecond returns the average bytes transferred per second over
@@ -173,27 +173,28 @@ func (c *Response) copy() error {
 	// validate checksum
 	if complete && c.Request.Hash != nil && c.Request.Checksum != nil {
 		// open downloaded file
-		if f, err := os.Open(c.Filename); err != nil {
+		f, err := os.Open(c.Filename)
+		if err != nil {
 			return c.close(err)
-		} else {
-			defer f.Close()
+		}
 
-			// hash file
-			if _, err := io.Copy(c.Request.Hash, f); err != nil {
-				return c.close(err)
+		defer f.Close()
+
+		// hash file
+		if _, err := io.Copy(c.Request.Hash, f); err != nil {
+			return c.close(err)
+		}
+
+		// compare checksum
+		sum := c.Request.Hash.Sum(nil)
+		if !bytes.Equal(sum, c.Request.Checksum) {
+			// delete file
+			if c.Request.RemoveOnError {
+				f.Close()
+				os.Remove(c.Filename)
 			}
 
-			// compare checksum
-			sum := c.Request.Hash.Sum(nil)
-			if !bytes.Equal(sum, c.Request.Checksum) {
-				// delete file
-				if c.Request.RemoveOnError {
-					f.Close()
-					os.Remove(c.Filename)
-				}
-
-				return c.close(newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum)))
-			}
+			return c.close(newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum)))
 		}
 	}
 

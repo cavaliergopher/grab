@@ -195,7 +195,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 			needFilename = true
 		}
 	} else if !os.IsNotExist(err) {
-		// file doesnt exist and an error occurred
+		// file doesn't exist and an error occurred
 		return resp, resp.close(err)
 	}
 

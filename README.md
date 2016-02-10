@@ -9,12 +9,12 @@
 Grab is a Go package for downloading files from the internet with the following
 rad features:
 
-* Monitor download progress asyncronously
+* Monitor download progress asynchronously
 * Auto-resume incomplete downloads
 * Guess filename from content header or URL path
 * Safely cancel downloads
 * Validate downloads using checksums
-* Download batches of files asyncronously
+* Download batches of files asynchronously
 
 For a full walkthrough, see:
 http://cavaliercoder.com/blog/downloading-large-files-in-go.html

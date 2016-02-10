@@ -111,7 +111,7 @@ func testFilename(t *testing.T, req *Request, filename string) {
 }
 
 // TestWithFilename asserts that the downloaded filename matches a filename
-// specified explicitely via Request.Filename, and not a name matching the
+// specified explicitly via Request.Filename, and not a name matching the
 // request URL or Content-Disposition header.
 func TestWithFilename(t *testing.T) {
 	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
@@ -121,7 +121,7 @@ func TestWithFilename(t *testing.T) {
 }
 
 // TestWithHeaderFilename asserts that the downloaded filename matches a
-// filename specified explicitely via the Content-Disposition header and not a
+// filename specified explicitly via the Content-Disposition header and not a
 // name matching the request URL.
 func TestWithHeaderFilename(t *testing.T) {
 	req, _ := NewRequest(ts.URL + "/url-filename?filename=.testWithHeaderFilename")
