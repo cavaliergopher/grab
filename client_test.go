@@ -135,6 +135,17 @@ func TestWithURLFilename(t *testing.T) {
 	testFilename(t, req, ".testWithURLFilename")
 }
 
+// TestWithNoFilename ensures a No Filename error is returned when none can be
+// determined.
+func TestWithNoFilename(t *testing.T) {
+	req, _ := NewRequest(ts.URL)
+	resp, err := DefaultClient.Do(req)
+	if err == nil || !IsNoFilename(err) {
+		t.Errorf("Expected no filename error, got: %v", err)
+		os.Remove(resp.Filename)
+	}
+}
+
 // testChecksum executes a request and asserts that the computed checksum for
 // the downloaded file does or does not match the expected checksum.
 func testChecksum(t *testing.T, size int, sum string, match bool) {
