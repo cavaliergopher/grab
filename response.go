@@ -171,35 +171,48 @@ func (c *Response) copy() error {
 	}
 
 	// validate checksum
-	if complete && c.Request.Hash != nil && c.Request.Checksum != nil {
-		// open downloaded file
-		f, err := os.Open(c.Filename)
-		if err != nil {
+	if complete {
+		if err := c.checksum(); err != nil {
 			return c.close(err)
-		}
-
-		defer f.Close()
-
-		// hash file
-		if _, err := io.Copy(c.Request.Hash, f); err != nil {
-			return c.close(err)
-		}
-
-		// compare checksum
-		sum := c.Request.Hash.Sum(nil)
-		if !bytes.Equal(sum, c.Request.Checksum) {
-			// delete file
-			if c.Request.RemoveOnError {
-				f.Close()
-				os.Remove(c.Filename)
-			}
-
-			return c.close(newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum)))
 		}
 	}
 
 	// finalize
 	return c.close(nil)
+}
+
+func (c *Response) checksum() error {
+	// no error if hash not set
+	if c.Request.Hash == nil || c.Request.Checksum == nil {
+		return nil
+	}
+
+	// open downloaded file
+	f, err := os.Open(c.Filename)
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	// hash file
+	if _, err := io.Copy(c.Request.Hash, f); err != nil {
+		return err
+	}
+
+	// compare checksum
+	sum := c.Request.Hash.Sum(nil)
+	if !bytes.Equal(sum, c.Request.Checksum) {
+		// delete file
+		if c.Request.RemoveOnError {
+			f.Close()
+			os.Remove(c.Filename)
+		}
+
+		return newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum))
+	}
+
+	return nil
 }
 
 // close finalizes the response context

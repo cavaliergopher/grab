@@ -294,14 +294,21 @@ func (c *Client) do(req *Request) (*Response, error) {
 					}
 				}
 			} else if !os.IsNotExist(err) {
-				// error is os.Stat
+				// error in os.Stat
 				return resp, resp.close(err)
 			}
 		}
 	}
 
 	// skip if already downloaded
-	if resp.Size > 0 && resp.Size == resp.BytesTransferred() {
+	if resp.Size > 0 && resp.Size == resp.bytesResumed {
+		resp.DidResume = true
+
+		// validate checksum
+		if err := resp.checksum(); err != nil {
+			return resp, resp.close(err)
+		}
+
 		return resp, resp.close(nil)
 	}
 

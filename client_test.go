@@ -239,6 +239,7 @@ func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
 	filename := ".testAutoResume"
+	sum, _ := hex.DecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
 
 	// TODO: random segment size
 
@@ -252,7 +253,6 @@ func TestAutoResume(t *testing.T) {
 
 		// checksum the last request
 		if i == segs-1 {
-			sum, _ := hex.DecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
 			req.SetChecksum("sha256", sum)
 		}
 
@@ -285,10 +285,6 @@ func TestAutoResume(t *testing.T) {
 		}
 	}
 
-	// TODO: redownload and check time stamp
-
-	// TODO: ensure checksum is performed on pre-existing file
-
 	// error if existing file is larger than requested file
 	{
 		// request smaller segment
@@ -306,6 +302,38 @@ func TestAutoResume(t *testing.T) {
 	// delete downloaded file
 	if err := os.Remove(filename); err != nil {
 		t.Errorf("Error deleting test file: %v", err)
+	}
+}
+
+func TestSkipExisting(t *testing.T) {
+	filename := ".testSkipExisting"
+	defer os.Remove(filename)
+
+	// download a file
+	Get(filename, ts.URL)
+
+	// redownload
+	resp, _ := Get(filename, ts.URL)
+
+	// ensure download was resumed
+	if !resp.DidResume {
+		t.Fatalf("Expected download to skip existing file, but it did not")
+	}
+
+	// ensure all bytes were resumed
+	if resp.Size == 0 || resp.Size != resp.bytesResumed {
+		t.Fatalf("Expected to skip %d bytes in redownload; got %d", resp.Size, resp.bytesResumed)
+	}
+
+	// ensure checksum is performed on pre-existing file
+	req, _ := NewRequest(ts.URL)
+	req.Filename = filename
+	sum, _ := hex.DecodeString("badd")
+	req.SetChecksum("sha256", sum)
+
+	_, err := DefaultClient.Do(req)
+	if err == nil || !IsChecksumMismatch(err) {
+		t.Fatalf("Expected checksum error, got: %v", err)
 	}
 }
 
