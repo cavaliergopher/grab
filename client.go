@@ -175,6 +175,8 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 // do creates a Response context for the given request using a HTTP HEAD
 // request to the remote server.
 func (c *Client) do(req *Request) (*Response, error) {
+	dir := ""
+
 	// create a response
 	resp := &Response{
 		Request: req,
@@ -191,6 +193,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 	if fi, err := os.Stat(req.Filename); err == nil {
 		// file exists - is it a directory?
 		if fi.IsDir() {
+			dir = req.Filename
 			// destination is a directory - compute a file name later
 			needFilename = true
 		}
@@ -248,7 +251,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 				if cd := hresp.Header.Get("Content-Disposition"); cd != "" {
 					if _, params, err := mime.ParseMediaType(cd); err == nil {
 						if filename, ok := params["filename"]; ok {
-							resp.Filename = filename
+							resp.Filename = path.Join(dir, filename)
 							needFilename = false
 						}
 					}
@@ -259,7 +262,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 			if needFilename {
 				if req.HTTPRequest.URL.Path != "" && !strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
 					// update filepath with filename from URL
-					resp.Filename = filepath.Join(req.Filename, path.Base(req.HTTPRequest.URL.Path))
+					resp.Filename = filepath.Join(dir, req.Filename, path.Base(req.HTTPRequest.URL.Path))
 					needFilename = false
 				}
 			}

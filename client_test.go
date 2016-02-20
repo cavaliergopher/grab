@@ -75,9 +75,9 @@ func TestWithExistingDir(t *testing.T) {
 	}
 
 	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
-	req.Filename = "./test/"
+	req.Filename = "test"
 
-	testFilename(t, req, "./test/header-filename")
+	testFilename(t, req, "test/header-filename")
 
 	err = os.Remove("test")
 	if err != nil {
