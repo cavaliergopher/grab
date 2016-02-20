@@ -66,6 +66,25 @@ func TestWithNoFilename(t *testing.T) {
 	}
 }
 
+// TestWithExistingDir asserts that the resolved filename from the response
+// is appended to the existing dir specified explicitly via Request.Filename
+func TestWithExistingDir(t *testing.T) {
+	err := os.Mkdir("test", 0777)
+	if err != nil {
+		t.Error(err)
+	}
+
+	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
+	req.Filename = "./test/"
+
+	testFilename(t, req, "./test/header-filename")
+
+	err = os.Remove("test")
+	if err != nil {
+		t.Error(err)
+	}
+}
+
 // testChecksum executes a request and asserts that the computed checksum for
 // the downloaded file does or does not match the expected checksum.
 func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
