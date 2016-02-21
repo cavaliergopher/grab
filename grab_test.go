@@ -13,8 +13,30 @@ import (
 // ts is the test HTTP server instance initiated by TestMain().
 var ts *httptest.Server
 
-// TestMail starts a HTTP test server for all test cases to use as a download
-// source.
+// TestMain starts a HTTP test server for all test cases to use as a download
+// source. It serves a configurable stream of sequential data.
+//
+// The following headers are supported:
+//
+// * Range: bytes=[offset]-		request a byte range of the requested file
+//
+// The following URL query parameters are supported:
+//
+// * filename=[string]			return a filename in the Content-Disposition
+// 								header of the response
+//
+// * nohead						prohibit HEAD requests
+//
+// * range=[bool]				allow byte range requests (default: yes)
+//
+// * rate=[int]					throttle file transfer to the given limit as
+// 								bytes per second
+//
+// * size=[int]					return a file of the specified size in bytes
+//
+// * sleep=[int]				delay the response by the given number of
+// 								milliseconds (before sending headers)
+//
 func TestMain(m *testing.M) {
 	// start test HTTP server
 	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

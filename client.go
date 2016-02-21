@@ -216,6 +216,9 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 			// set response size
 			if hresp.ContentLength > 0 {
+				// If this is a GET request which resumes a previous transfer,
+				// ContentLength will likely only be the size of the requested
+				// byte range, not the full file size.
 				resp.Size = resp.BytesTransferred() + uint64(hresp.ContentLength)
 			}
 
