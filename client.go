@@ -175,8 +175,6 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 // do creates a Response context for the given request using a HTTP HEAD
 // request to the remote server.
 func (c *Client) do(req *Request) (*Response, error) {
-	dir := ""
-
 	// create a response
 	resp := &Response{
 		Request: req,
@@ -189,12 +187,13 @@ func (c *Client) do(req *Request) (*Response, error) {
 	}
 
 	// see if file is a directory
+	dir := ""
 	needFilename := false
 	if fi, err := os.Stat(req.Filename); err == nil {
 		// file exists - is it a directory?
 		if fi.IsDir() {
-			dir = req.Filename
 			// destination is a directory - compute a file name later
+			dir = req.Filename
 			needFilename = true
 		}
 	} else if !os.IsNotExist(err) {

@@ -69,17 +69,19 @@ func TestWithNoFilename(t *testing.T) {
 // TestWithExistingDir asserts that the resolved filename from the response
 // is appended to the existing dir specified explicitly via Request.Filename
 func TestWithExistingDir(t *testing.T) {
-	err := os.Mkdir("test", 0777)
+	err := os.Mkdir(".test", 0777)
 	if err != nil {
 		t.Error(err)
 	}
 
+	// test naming via Content-Disposition headers
 	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
-	req.Filename = "test"
+	req.Filename = ".test"
 
-	testFilename(t, req, "test/header-filename")
+	testFilename(t, req, ".test/header-filename")
 
-	err = os.Remove("test")
+	// cleanup
+	err = os.Remove(".test")
 	if err != nil {
 		t.Error(err)
 	}
