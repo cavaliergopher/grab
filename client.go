@@ -8,7 +8,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -186,26 +185,6 @@ func (c *Client) do(req *Request) (*Response, error) {
 		req.Filename = "."
 	}
 
-	// see if file is a directory
-	dir := ""
-	needFilename := false
-	if fi, err := os.Stat(req.Filename); err == nil {
-		// file exists - is it a directory?
-		if fi.IsDir() {
-			// destination is a directory - compute a file name later
-			dir = req.Filename
-			needFilename = true
-		}
-	} else if !os.IsNotExist(err) {
-		// file doesn't exist and an error occurred
-		return resp, resp.close(err)
-	}
-
-	// destination is a file that may or may not already exist
-	if !needFilename {
-		resp.Filename = req.Filename
-	}
-
 	// default write flags
 	wflags := os.O_CREATE | os.O_WRONLY
 
@@ -245,34 +224,30 @@ func (c *Client) do(req *Request) (*Response, error) {
 				return resp, resp.close(newGrabError(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
 			}
 
-			// get filename from Content-Disposition header
-			if needFilename {
-				if cd := hresp.Header.Get("Content-Disposition"); cd != "" {
-					if _, params, err := mime.ParseMediaType(cd); err == nil {
-						if filename, ok := params["filename"]; ok {
-							resp.Filename = path.Join(dir, filename)
-							needFilename = false
-						}
-					}
-				}
+			// compute destination filename
+			if err := computeFilename(req, resp); err != nil {
+				return resp, resp.close(err)
 			}
 
-			// get filename from url if still needed
-			if needFilename {
-				if req.HTTPRequest.URL.Path != "" && !strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
-					// update filepath with filename from URL
-					resp.Filename = filepath.Join(dir, path.Base(req.HTTPRequest.URL.Path))
-					needFilename = false
-				}
-			}
+			// TODO: skip FileInfo check if completed in HEAD
 
-			// too bad if no filename found yet
-			if needFilename {
-				return resp, resp.close(newGrabError(errNoFilename, "No filename could be determined"))
-			}
-
-			// get fileinfo
+			// get fileinfo for destination
 			if fi, err := os.Stat(resp.Filename); err == nil {
+				// check if file transfer already complete
+				if resp.Size > 0 && uint64(fi.Size()) == resp.Size {
+					// update response
+					resp.DidResume = true
+					resp.bytesResumed = uint64(fi.Size())
+					resp.bytesTransferred = uint64(fi.Size())
+
+					// validate checksum
+					if err := resp.checksum(); err != nil {
+						return resp, resp.close(err)
+					}
+
+					return resp, resp.close(nil)
+				}
+
 				// check if existing file is larger than expected
 				if uint64(fi.Size()) > resp.Size {
 					return resp, resp.close(newGrabError(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
@@ -287,7 +262,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 					wflags = os.O_APPEND | os.O_WRONLY
 
 					// update progress
-					atomic.AddUint64(&resp.bytesTransferred, uint64(fi.Size()))
+					resp.bytesTransferred = uint64(fi.Size())
 
 					// set byte range in next request
 					if fi.Size() > 0 {
@@ -300,18 +275,6 @@ func (c *Client) do(req *Request) (*Response, error) {
 				return resp, resp.close(err)
 			}
 		}
-	}
-
-	// skip if already downloaded
-	if resp.Size > 0 && resp.Size == resp.bytesResumed {
-		resp.DidResume = true
-
-		// validate checksum
-		if err := resp.checksum(); err != nil {
-			return resp, resp.close(err)
-		}
-
-		return resp, resp.close(nil)
 	}
 
 	// open destination for writing
@@ -337,4 +300,59 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 	// response context is ready to start transfer with resp.copy()
 	return resp, nil
+}
+
+// computeFilename determines the destination filename for a request and sets
+// resp.Filename. If no name is determined, an error is returned which can be
+// identified with IsNoFilename.
+func computeFilename(req *Request, resp *Response) error {
+	// return if destination path already set
+	if resp.Filename != "" {
+		return nil
+	}
+
+	// see if requested destination is a directory
+	dir := ""
+	if fi, err := os.Stat(req.Filename); err == nil {
+		// file exists - is it a directory?
+		if fi.IsDir() {
+			// destination is a directory - compute a file name later
+			dir = req.Filename
+		} else {
+			// destination is an existing file
+			resp.Filename = req.Filename
+		}
+	} else if os.IsNotExist(err) {
+		// file doesn't exist
+		resp.Filename = req.Filename
+	} else {
+		// an error occurred
+		return err
+	}
+
+	// get filename from Content-Disposition header
+	if resp.Filename == "" {
+		if cd := resp.HTTPResponse.Header.Get("Content-Disposition"); cd != "" {
+			if _, params, err := mime.ParseMediaType(cd); err == nil {
+				if filename, ok := params["filename"]; ok {
+					resp.Filename = path.Join(dir, filename)
+				}
+			}
+		}
+	}
+
+	// get filename from url if still needed
+	if resp.Filename == "" {
+		if req.HTTPRequest.URL.Path != "" && !strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
+			// update filepath with filename from URL
+			resp.Filename = filepath.Join(dir, path.Base(req.HTTPRequest.URL.Path))
+		}
+	}
+
+	// too bad if no filename found yet
+	if resp.Filename == "" {
+		return newGrabError(errNoFilename, "No filename could be determined")
+	}
+
+	return nil
 }

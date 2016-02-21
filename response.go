@@ -69,7 +69,8 @@ type Response struct {
 }
 
 // IsComplete indicates whether the Response transfer context has completed with
-// either a success or failure.
+// either a success or failure. If the transfer was unsuccessful, Response.Error
+// will be non-nil.
 func (c *Response) IsComplete() bool {
 	return atomic.LoadInt32(&c.doneFlag) > 0
 }

@@ -78,6 +78,12 @@ func TestMain(m *testing.M) {
 			if _, err := fmt.Sscanf(rangeh, "bytes=%d-", &offset); err != nil {
 				panic(err)
 			}
+
+			// make sure range is in range
+			if offset >= size {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
 		}
 
 		// delay response

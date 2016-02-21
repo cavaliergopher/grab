@@ -10,6 +10,37 @@ import (
 	"time"
 )
 
+// testComplete validates that a completed transfer response has all the desired
+// fields filled.
+func testComplete(t *testing.T, resp *Response) {
+	if !resp.IsComplete() {
+		t.Errorf("Response.IsComplete returned false")
+	}
+
+	if resp.Start.IsZero() {
+		t.Errorf("Response.Start is zero")
+	}
+
+	if resp.End.IsZero() {
+		t.Error("Response.End is zero")
+	}
+
+	if eta := resp.ETA(); eta != resp.End {
+		t.Errorf("Response.ETA is not equal to Response.End: %v", eta)
+	}
+
+	// the following fields should only be set if no error occurred
+	if resp.Error == nil {
+		if resp.Filename == "" {
+			t.Errorf("Response.Filename is empty")
+		}
+
+		if p := resp.Progress(); p != 1.00 {
+			t.Errorf("Response.Progress returned %v, expected 1.00", p)
+		}
+	}
+}
+
 // testFilename executes a request and asserts that the downloaded filename
 // matches the given filename.
 func testFilename(t *testing.T, req *Request, filename string) {
@@ -28,6 +59,8 @@ func testFilename(t *testing.T, req *Request, filename string) {
 	if resp.Filename != filename {
 		t.Errorf("Filename mismatch. Expected '%s', got '%s'.", filename, resp.Filename)
 	}
+
+	testComplete(t, resp)
 }
 
 // TestWithFilename asserts that the downloaded filename matches a filename
@@ -108,7 +141,7 @@ func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
 	req.SetChecksum(algorithm, sumb)
 
 	// fetch
-	_, err := DefaultClient.Do(req)
+	resp, err := DefaultClient.Do(req)
 	if err != nil {
 		if !IsChecksumMismatch(err) {
 			t.Errorf("Error in Client.Do(): %v", err)
@@ -118,6 +151,8 @@ func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
 	} else if !match {
 		t.Errorf("Expected checksum mismatch but comparison succeeded (%s %v bytes)", algorithm, size)
 	}
+
+	testComplete(t, resp)
 }
 
 // TestChecksums executes a number of checksum tests via testChecksum.
@@ -194,6 +229,8 @@ func testSize(t *testing.T, url string, size uint64, match bool) {
 			t.Errorf("Error deleting test file: %v", err)
 		}
 	}
+
+	testComplete(t, resp)
 }
 
 // TestSize exeuctes a number of size tests via testSize.
@@ -242,8 +279,12 @@ func TestAutoResume(t *testing.T) {
 		if resp, err := DefaultClient.Do(req); err != nil {
 			t.Errorf("Error segment %d (%d bytes): %v", i+1, segsize, err)
 			break
-		} else if i > 0 && !resp.DidResume {
-			t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
+		} else {
+			if i > 0 && !resp.DidResume {
+				t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
+			}
+
+			testComplete(t, resp)
 		}
 
 		// only check birth time on OS's that support it
@@ -294,12 +335,14 @@ func TestSkipExisting(t *testing.T) {
 	// download a file
 	req, _ := NewRequest(ts.URL)
 	req.Filename = filename
-	DefaultClient.Do(req)
+	resp, _ := DefaultClient.Do(req)
+	testComplete(t, resp)
 
 	// redownload
 	req, _ = NewRequest(ts.URL)
 	req.Filename = filename
-	resp, _ := DefaultClient.Do(req)
+	resp, _ = DefaultClient.Do(req)
+	testComplete(t, resp)
 
 	// ensure download was resumed
 	if !resp.DidResume {
@@ -356,6 +399,8 @@ func TestBatch(t *testing.T) {
 				// swallow responses channel for newly initiated responses
 
 			case resp := <-done:
+				testComplete(t, resp)
+
 				// handle errors
 				if resp.Error != nil {
 					t.Errorf("%s: %v", resp.Filename, resp.Error)
@@ -386,6 +431,7 @@ func TestCancel(t *testing.T) {
 
 	// wait for response
 	resp := <-ch
+	testComplete(t, resp)
 
 	// validate error
 	if resp.Error == nil ||
@@ -416,6 +462,7 @@ func TestCancelInProcess(t *testing.T) {
 
 	// wait for closure
 	<-done
+	testComplete(t, resp)
 
 	// validate error
 	if resp.Error == nil ||
