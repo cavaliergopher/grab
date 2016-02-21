@@ -80,6 +80,12 @@ func TestWithExistingDir(t *testing.T) {
 
 	testFilename(t, req, ".test/header-filename")
 
+	// test naming via URL
+	req, _ = NewRequest(ts.URL + "/url-filename?garbage")
+	req.Filename = ".test"
+
+	testFilename(t, req, ".test/url-filename")
+
 	// cleanup
 	err = os.Remove(".test")
 	if err != nil {

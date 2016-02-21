@@ -261,7 +261,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 			if needFilename {
 				if req.HTTPRequest.URL.Path != "" && !strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
 					// update filepath with filename from URL
-					resp.Filename = filepath.Join(dir, req.Filename, path.Base(req.HTTPRequest.URL.Path))
+					resp.Filename = filepath.Join(dir, path.Base(req.HTTPRequest.URL.Path))
 					needFilename = false
 				}
 			}
