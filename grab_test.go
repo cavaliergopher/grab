@@ -132,7 +132,7 @@ func TestGetAsync(t *testing.T) {
 	}
 
 	if resp := <-respch; resp.Error != nil {
-		t.Fatal("Error in GetAsync transfer: %v", resp.Error)
+		t.Fatalf("Error in GetAsync transfer: %v", resp.Error)
 	}
 }
 
