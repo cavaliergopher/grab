@@ -17,6 +17,20 @@ import (
 // transfer while it is process. All functions are safe to use from multiple
 // go-routines.
 type Response struct {
+	// bytesTransferred specifies the number of bytes which have already been
+	// transferred and should only be accessed atomically.
+	//
+	// Must be 64bit aligned as per
+	// https://github.com/cavaliercoder/grab/issues/4
+	bytesTransferred uint64
+
+	// doneFlag is incremented once the transfer is finalized, either
+	// successfully or with errors.
+	//
+	// Must be 64bit aligned as per
+	// https://github.com/cavaliercoder/grab/issues/4
+	doneFlag int32
+
 	// The Request that was sent to obtain this Response.
 	Request *Request
 
@@ -58,14 +72,6 @@ type Response struct {
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
 	bytesResumed uint64
-
-	// bytesTransferred specifies the number of bytes which have already been
-	// transferred and should only be accessed atomically.
-	bytesTransferred uint64
-
-	// doneFlag is incremented once the transfer is finalized, either
-	// successfully or with errors.
-	doneFlag int32
 }
 
 // IsComplete indicates whether the Response transfer context has completed with
