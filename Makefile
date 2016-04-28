@@ -1,15 +1,14 @@
 GO = go
+GOGET = $(GO) get -u
 
 all: test lint
 
-deps:
-	$(GO) get -u github.com/djherbis/times
-	$(GO) get -u github.com/golang/lint/golint
-	$(GO) get -u github.com/fzipp/gocyclo
-	$(GO) get -u github.com/client9/misspell/cmd/misspell
-
 test:
 	$(GO) test -v -cover
+
+test-deps:
+	$(GOGET) golang.org/x/tools/cmd/cover
+	$(GOGET) github.com/djherbis/times
 
 lint:
 	gofmt -l -e -s . || :
@@ -18,4 +17,9 @@ lint:
 	gocyclo -over 15 . || :
 	misspell ./* || :
 
-.PHONY: all deps test lint
+lint-deps:	
+	$(GOGET) github.com/golang/lint/golint
+	$(GOGET) github.com/fzipp/gocyclo
+	$(GOGET) github.com/client9/misspell/cmd/misspell
+
+.PHONY: all deps test test-deps lint lint-deps

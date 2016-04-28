@@ -19,6 +19,8 @@ rad features:
 For a full walkthrough, see:
 http://cavaliercoder.com/blog/downloading-large-files-in-go.html
 
+Requires Go v1.4+
+
 
 ## Example
 
