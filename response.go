@@ -72,6 +72,9 @@ type Response struct {
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
 	bytesResumed uint64
+
+	// bufferSize specifies the site in bytes of the transfer buffer.
+	bufferSize uint
 }
 
 // IsComplete indicates whether the Response transfer context has completed with
@@ -150,8 +153,14 @@ func (c *Response) copy() error {
 	// close writer when finished
 	defer c.writer.Close()
 
+	// set transfer buffer size
+	bufferSize := c.bufferSize
+	if bufferSize == 0 {
+		bufferSize = 4096
+	}
+
 	// download and update progress
-	var buffer [4096]byte
+	buffer := make([]byte, bufferSize)
 	complete := false
 	for complete == false {
 		// read HTTP stream

@@ -38,6 +38,12 @@ type Request struct {
 	// error returned.
 	Size uint64
 
+	// BufferSize specifies the size in bytes of the buffer that is used for
+	// transferring the requested file. Larger buffers may result in faster
+	// throughput but will use more memory and result in less frequent updates
+	// to the transfer progress statistics. Default: 4096.
+	BufferSize uint
+
 	// Hash specifies the hashing algorithm that will be used to compute the
 	// checksum value of the transferred file.
 	//

@@ -176,8 +176,9 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 func (c *Client) do(req *Request) (*Response, error) {
 	// create a response
 	resp := &Response{
-		Request: req,
-		Start:   time.Now(),
+		Request:    req,
+		Start:      time.Now(),
+		bufferSize: req.BufferSize,
 	}
 
 	// default to current working directory
