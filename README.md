@@ -52,7 +52,7 @@ func main() {
 	client.UserAgent = "Grab example"
 
 	// create request for each URL given on the command line
-	reqs := make(grab.Requests, 0)
+	reqs := make([]*grab.Request, 0)
 	for _, url := range os.Args[1:] {
 		req, err := grab.NewRequest(url)
 		if err != nil {
