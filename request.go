@@ -33,6 +33,10 @@ type Request struct {
 	// directory.
 	Filename string
 
+	// CreateMissing specifies that any missing directories in the Filename path
+	// should be automatically created.
+	CreateMissing bool
+
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and an
 	// error returned.

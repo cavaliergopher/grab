@@ -281,6 +281,16 @@ func (c *Client) do(req *Request) (*Response, error) {
 		}
 	}
 
+	// create destination directory
+	if req.CreateMissing {
+		dir := filepath.Dir(req.Filename)
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return resp, resp.close(err)
+			}
+		}
+	}
+
 	// open destination for writing
 	f, err := os.OpenFile(resp.Filename, wflags, 0644)
 	if err != nil {
