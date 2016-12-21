@@ -184,6 +184,22 @@ func (c *Client) do(req *Request) (*Response, error) {
 	// default to current working directory
 	if req.Filename == "" {
 		req.Filename = "."
+	} else if req.SkipExisting {
+		// skip existing files
+		fi, err := os.Stat(req.Filename)
+		if !os.IsNotExist(err) {
+			if err != nil {
+				return resp, resp.close(err)
+			}
+
+			if !fi.IsDir() {
+				resp.Filename = req.Filename
+				resp.DidResume = true
+				resp.Size = uint64(fi.Size())
+				resp.bytesResumed = uint64(fi.Size())
+				return resp, resp.close(nil)
+			}
+		}
 	}
 
 	// default write flags

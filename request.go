@@ -37,6 +37,11 @@ type Request struct {
 	// should be automatically created.
 	CreateMissing bool
 
+	// SkipExisting specifies that any files at the given Filename path, that
+	// already exist will be naively skipped; without checking file size or
+	// checksum.
+	SkipExisting bool
+
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and an
 	// error returned.
