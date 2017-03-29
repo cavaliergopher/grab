@@ -121,9 +121,6 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
-	responses := make(chan *Response, workers)
-	workerDone := make(chan bool, workers)
-
 	// start work queue
 	producer := make(chan *Request, 0)
 	go func() {
@@ -132,12 +129,6 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 			producer <- reqs[i]
 		}
 		close(producer)
-
-		// close channel when all workers are finished
-		for i := 0; i < workers; i++ {
-			<-workerDone
-		}
-		close(responses)
 	}()
 
 	// default one worker per request
@@ -145,30 +136,7 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 		workers = len(reqs)
 	}
 
-	// start workers
-	for i := 0; i < workers; i++ {
-		go func(i int) {
-			// work until producer is dried up
-			for req := range producer {
-				// set up notifier
-				req.notifyOnCloseInternal = make(chan *Response, 1)
-
-				// start request
-				resp := <-c.DoAsync(req)
-
-				// ship state to caller
-				responses <- resp
-
-				// wait for async op to finish before moving to next request
-				<-req.notifyOnCloseInternal
-			}
-
-			// signal worker is done
-			workerDone <- true
-		}(i)
-	}
-
-	return responses
+	return c.DoChannel(workers, producer)
 }
 
 // DoChannel executes multiple requests with the given number of workers and
