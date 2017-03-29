@@ -171,6 +171,65 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 	return responses
 }
 
+// DoChannel executes multiple requests with the given number of workers and
+// immediately returns a channel to receive the Responses as they become
+// available. Excess requests are queued until a worker becomes available. The
+// channel is closed once the reqs channel is closed and all responses have been sent.
+//
+// If zero is given as the worker count, one worker will be created.
+//
+// Each response is sent through the channel once the request is initiated via
+// HTTP GET or an error has occurred, but before the file transfer begins.
+//
+// Any error which occurs during any of the file transfers will be set in the
+// associated Response.Error field as soon as the Response.IsComplete method
+// returns true.
+func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
+	// TODO: enable cancelling of batch jobs
+
+	responses := make(chan *Response, workers)
+	workerDone := make(chan bool, workers)
+
+	// start work queue
+	go func() {
+		// close channel when all workers are finished
+		for i := 0; i < workers; i++ {
+			<-workerDone
+		}
+		close(responses)
+	}()
+
+	// default one worker
+	if workers == 0 {
+		workers = 1
+	}
+
+	// start workers
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			// work until reqs is dried up
+			for req := range reqs {
+				// set up notifier
+				req.notifyOnCloseInternal = make(chan *Response, 1)
+
+				// start request
+				resp := <-c.DoAsync(req)
+
+				// ship state to caller
+				responses <- resp
+
+				// wait for async op to finish before moving to next request
+				<-req.notifyOnCloseInternal
+			}
+
+			// signal worker is done
+			workerDone <- true
+		}(i)
+	}
+
+	return responses
+}
+
 // do creates a Response context for the given request using a HTTP HEAD
 // request to the remote server.
 func (c *Client) do(req *Request) (*Response, error) {
