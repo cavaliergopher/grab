@@ -122,6 +122,11 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
+	// default one worker per request
+	if workers == 0 {
+		workers = len(reqs)
+	}
+
 	// start work queue
 	producer := make(chan *Request, 0)
 	go func() {
@@ -131,11 +136,6 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 		}
 		close(producer)
 	}()
-
-	// default one worker per request
-	if workers == 0 {
-		workers = len(reqs)
-	}
 
 	return c.DoChannel(workers, producer)
 }
@@ -156,13 +156,13 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
-	responses := make(chan *Response, workers)
-	wg := sync.WaitGroup{}
-
 	// default one worker
 	if workers == 0 {
 		workers = 1
 	}
+
+	responses := make(chan *Response, workers)
+	wg := sync.WaitGroup{}
 
 	// start workers
 	for i := 0; i < workers; i++ {
