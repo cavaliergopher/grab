@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -156,16 +157,7 @@ func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
 	responses := make(chan *Response, workers)
-	workerDone := make(chan bool, workers)
-
-	// start work queue
-	go func() {
-		// close channel when all workers are finished
-		for i := 0; i < workers; i++ {
-			<-workerDone
-		}
-		close(responses)
-	}()
+	wg := sync.WaitGroup{}
 
 	// default one worker
 	if workers == 0 {
@@ -174,6 +166,7 @@ func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
 
 	// start workers
 	for i := 0; i < workers; i++ {
+		wg.Add(1)
 		go func(i int) {
 			// work until reqs is dried up
 			for req := range reqs {
@@ -191,9 +184,15 @@ func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
 			}
 
 			// signal worker is done
-			workerDone <- true
+			wg.Done()
 		}(i)
 	}
+
+	go func() {
+		// close channel when all workers are finished
+		wg.Wait()
+		close(responses)
+	}()
 
 	return responses
 }
