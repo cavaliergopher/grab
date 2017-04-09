@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -121,8 +122,10 @@ func (c *Client) DoAsync(req *Request) <-chan *Response {
 func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 	// TODO: enable cancelling of batch jobs
 
-	responses := make(chan *Response, workers)
-	workerDone := make(chan bool, workers)
+	// default one worker per request
+	if workers == 0 {
+		workers = len(reqs)
+	}
 
 	// start work queue
 	producer := make(chan *Request, 0)
@@ -132,24 +135,41 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 			producer <- reqs[i]
 		}
 		close(producer)
-
-		// close channel when all workers are finished
-		for i := 0; i < workers; i++ {
-			<-workerDone
-		}
-		close(responses)
 	}()
 
-	// default one worker per request
+	return c.DoChannel(workers, producer)
+}
+
+// DoChannel executes multiple requests with the given number of workers and
+// immediately returns a channel to receive the Responses as they become
+// available. Excess requests are queued until a worker becomes available. The
+// channel is closed once the reqs channel is closed and all responses have been sent.
+//
+// If zero is given as the worker count, one worker will be created.
+//
+// Each response is sent through the channel once the request is initiated via
+// HTTP GET or an error has occurred, but before the file transfer begins.
+//
+// Any error which occurs during any of the file transfers will be set in the
+// associated Response.Error field as soon as the Response.IsComplete method
+// returns true.
+func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
+	// TODO: enable cancelling of batch jobs
+
+	// default one worker
 	if workers == 0 {
-		workers = len(reqs)
+		workers = 1
 	}
+
+	responses := make(chan *Response, workers)
+	wg := sync.WaitGroup{}
 
 	// start workers
 	for i := 0; i < workers; i++ {
+		wg.Add(1)
 		go func(i int) {
-			// work until producer is dried up
-			for req := range producer {
+			// work until reqs is dried up
+			for req := range reqs {
 				// set up notifier
 				req.notifyOnCloseInternal = make(chan *Response, 1)
 
@@ -164,9 +184,15 @@ func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
 			}
 
 			// signal worker is done
-			workerDone <- true
+			wg.Done()
 		}(i)
 	}
+
+	go func() {
+		// close channel when all workers are finished
+		wg.Wait()
+		close(responses)
+	}()
 
 	return responses
 }

@@ -100,7 +100,7 @@ func GetAsync(dst, src string) (<-chan *Response, error) {
 // associated Response.Error field as soon as the Response.IsComplete method
 // returns true.
 //
-// GetBatch is a wrapper for DefaultClient.GetBatch.
+// GetBatch is a wrapper for DefaultClient.DoBatch.
 func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, error) {
 	// default to current working directory
 	if dst == "" {
