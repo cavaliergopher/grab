@@ -13,7 +13,7 @@ import (
 // Response represents the response to a completed or in-process download
 // request.
 //
-// For asyncronous operations, the Response also provides context for the file
+// For asynchronous operations, the Response also provides context for the file
 // transfer while it is process. All functions are safe to use from multiple
 // go-routines.
 type Response struct {
