@@ -16,15 +16,8 @@ func TestResponseProgress(t *testing.T) {
 	size := 1024 * 8 // bytes
 
 	// request a slow transfer
-	req, _ := NewRequest(fmt.Sprintf("%s?sleep=%v&size=%v", ts.URL, sleep, size))
-	req.Filename = filename
-
-	respch := DefaultClient.DoAsync(req)
-	resp := <-respch
-
-	if resp.Error != nil {
-		t.Fatalf("%v", resp.Error)
-	}
+	req, _ := NewRequest(filename, fmt.Sprintf("%s?sleep=%v&size=%v", ts.URL, sleep, size))
+	resp, _ := DefaultClient.Do(req)
 
 	// make sure transfer has not started
 	if resp.IsComplete() {
@@ -36,9 +29,7 @@ func TestResponseProgress(t *testing.T) {
 	}
 
 	// wait for transfer to complete
-	for !resp.IsComplete() {
-
-	}
+	resp.Wait()
 
 	// make sure transfer is complete
 	if p := resp.Progress(); p != 1 {

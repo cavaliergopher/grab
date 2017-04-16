@@ -28,6 +28,7 @@ successfully.
 package grab
 
 import (
+	"fmt"
 	"os"
 )
 
@@ -38,98 +39,41 @@ import (
 // An error is returned if caused by client policy (such as CheckRedirect), or
 // if there was an HTTP protocol error.
 //
-// Get is a synchronous, blocking operation which returns only once a download
-// request is completed or fails. For non-blocking operations which enable the
-// monitoring of transfers in process, see GetAsync, GetBatch or use a Client.
+// Get blocks until a download request is completed or fails. For non-blocking
+// operations which enable the monitoring of transfers in process, see GetAsync, GetBatch or use a Client.
 //
 // Get is a wrapper for DefaultClient.Do.
-func Get(dst, src string) (*Response, error) {
-	// init client and request
-	req, err := NewRequest(src)
+func Get(dst, urlStr string) (*Response, error) {
+	req, err := NewRequest(dst, urlStr)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Filename = dst
-
-	// execute with default client
-	return DefaultClient.Do(req)
+	resp, err := DefaultClient.Do(req)
+	resp.Wait()
+	return resp, err
 }
 
-// GetAsync sends a file transfer request and returns a channel to receive the
-// file transfer response context.
-//
-// The Response is sent via the returned channel and the channel closed as soon
-// as the HTTP/1.1 GET request has been served; before the file transfer begins.
-//
-// The Response may then be used to monitor the progress of the file transfer
-// while it is in process.
-//
-// Any error which occurs during the file transfer will be set in the returned
-// Response.Error field as soon as the Response.IsComplete method returns true.
-//
-// GetAsync is a wrapper for DefaultClient.DoAsync.
-func GetAsync(dst, src string) (<-chan *Response, error) {
-	// init client and request
-	req, err := NewRequest(src)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Filename = dst
-
-	// execute async with default client
-	return DefaultClient.DoAsync(req), nil
-}
-
-// GetBatch executes multiple requests with the given number of workers and
-// immediately returns a channel to receive the Responses as they become
-// available. Excess requests are queued until a worker becomes available. The
-// channel is closed once all responses have been sent.
-//
-// GetBatch requires that the destination path is an existing directory. If not,
-// an error is returned which may be identified with IsBadDestination.
-//
-// If zero is given as the worker count, one worker will be created for each
-// given request and all requests will start at the same time.
-//
-// Each response is sent through the channel once the request is initiated via
-// HTTP GET or an error has occurred, but before the file transfer begins.
-//
-// Any error which occurs during any of the file transfers will be set in the
-// associated Response.Error field as soon as the Response.IsComplete method
-// returns true.
-//
-// GetBatch is a wrapper for DefaultClient.DoBatch.
-func GetBatch(workers int, dst string, sources ...string) (<-chan *Response, error) {
-	// default to current working directory
-	if dst == "" {
-		dst = "."
-	}
-
-	// check that dst is an existing directory
+// GetBatch send multiple file transfer requests and returns a channel through
+// which all Response transfer contexts will be returned.
+func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, error) {
 	fi, err := os.Stat(dst)
 	if err != nil {
 		return nil, err
 	}
-
 	if !fi.IsDir() {
-		return nil, newGrabError(errBadDestination, "Destination path is not a directory")
+		return nil, fmt.Errorf("destination is not a directory")
 	}
 
-	// build slice of request
-	reqs := make([]*Request, len(sources))
-	for i := 0; i < len(sources); i++ {
-		req, err := NewRequest(sources[i])
+	reqs := make([]*Request, len(urlStrs))
+	for i := 0; i < len(urlStrs); i++ {
+		req, err := NewRequest(dst, urlStrs[i])
 		if err != nil {
 			return nil, err
 		}
-
-		req.Filename = dst
-
 		reqs[i] = req
 	}
 
-	// execute batch with default client
-	return DefaultClient.DoBatch(workers, reqs...), nil
+	ch := DefaultClient.DoBatch(workers, reqs...)
+	return ch, nil
 }

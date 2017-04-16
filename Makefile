@@ -3,8 +3,12 @@ GOGET = $(GO) get -u
 
 all: test lint
 
-test:
+check:
 	$(GO) test -v -cover
+
+clean:
+	$(GO) clean -x
+	rm -vf ./.test*
 
 test-deps:
 	$(GOGET) golang.org/x/tools/cmd/cover

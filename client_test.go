@@ -1,18 +1,24 @@
 package grab
 
 import (
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
-	"github.com/djherbis/times"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/djherbis/times"
 )
 
 // testComplete validates that a completed transfer response has all the desired
 // fields filled.
 func testComplete(t *testing.T, resp *Response) {
+	resp.Wait()
 	if !resp.IsComplete() {
 		t.Errorf("Response.IsComplete returned false")
 	}
@@ -30,7 +36,7 @@ func testComplete(t *testing.T, resp *Response) {
 	}
 
 	// the following fields should only be set if no error occurred
-	if resp.Error == nil {
+	if resp.Err() == nil {
 		if resp.Filename == "" {
 			t.Errorf("Response.Filename is empty")
 		}
@@ -45,8 +51,8 @@ func testComplete(t *testing.T, resp *Response) {
 // matches the given filename.
 func testFilename(t *testing.T, req *Request, filename string) {
 	// fetch
-	resp, err := DefaultClient.Do(req)
-	if err != nil {
+	resp, _ := DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
 		t.Errorf("Error in Client.Do(): %v", err)
 	}
 
@@ -67,9 +73,7 @@ func testFilename(t *testing.T, req *Request, filename string) {
 // specified explicitly via Request.Filename, and not a name matching the
 // request URL or Content-Disposition header.
 func TestWithFilename(t *testing.T) {
-	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
-	req.Filename = ".testWithFilename"
-
+	req, _ := NewRequest(".testWithFilename", ts.URL+"/url-filename?filename=header-filename")
 	testFilename(t, req, ".testWithFilename")
 }
 
@@ -77,21 +81,21 @@ func TestWithFilename(t *testing.T) {
 // filename specified explicitly via the Content-Disposition header and not a
 // name matching the request URL.
 func TestWithHeaderFilename(t *testing.T) {
-	req, _ := NewRequest(ts.URL + "/url-filename?filename=.testWithHeaderFilename")
+	req, _ := NewRequest("", ts.URL+"/url-filename?filename=.testWithHeaderFilename")
 	testFilename(t, req, ".testWithHeaderFilename")
 }
 
 // TestWithURLFilename asserts that the downloaded filename matches the
 // requested URL.
 func TestWithURLFilename(t *testing.T) {
-	req, _ := NewRequest(ts.URL + "/.testWithURLFilename?params-filename")
+	req, _ := NewRequest("", ts.URL+"/.testWithURLFilename?params-filename")
 	testFilename(t, req, ".testWithURLFilename")
 }
 
 // TestWithNoFilename ensures a No Filename error is returned when none can be
 // determined.
 func TestWithNoFilename(t *testing.T) {
-	req, _ := NewRequest(ts.URL)
+	req, _ := NewRequest("", ts.URL)
 	resp, err := DefaultClient.Do(req)
 	if err == nil || !IsNoFilename(err) {
 		t.Errorf("Expected no filename error, got: %v", err)
@@ -108,13 +112,13 @@ func TestWithExistingDir(t *testing.T) {
 	}
 
 	// test naming via Content-Disposition headers
-	req, _ := NewRequest(ts.URL + "/url-filename?filename=header-filename")
+	req, _ := NewRequest("", ts.URL+"/url-filename?filename=header-filename")
 	req.Filename = ".test"
 
 	testFilename(t, req, ".test/header-filename")
 
 	// test naming via URL
-	req, _ = NewRequest(ts.URL + "/url-filename?garbage")
+	req, _ = NewRequest("", ts.URL+"/url-filename?garbage")
 	req.Filename = ".test"
 
 	testFilename(t, req, ".test/url-filename")
@@ -133,15 +137,22 @@ func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
 	defer os.Remove(filename)
 
 	// create request
-	req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", size))
-	req.Filename = filename
-
-	// set expected checksum
-	sumb, _ := hex.DecodeString(sum)
-	req.SetChecksum(algorithm, sumb)
+	req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size))
+	req.Checksum, _ = hex.DecodeString(sum)
+	switch algorithm {
+	case "md5":
+		req.Hash = md5.New()
+	case "sha1":
+		req.Hash = sha1.New()
+	case "sha256":
+		req.Hash = sha256.New()
+	case "sha512":
+		req.Hash = sha512.New()
+	}
 
 	// fetch
-	resp, err := DefaultClient.Do(req)
+	resp, _ := DefaultClient.Do(req)
+	err := resp.Err()
 	if err != nil {
 		if !IsChecksumMismatch(err) {
 			t.Errorf("Error in Client.Do(): %v", err)
@@ -196,22 +207,16 @@ func TestChecksums(t *testing.T) {
 
 	testChecksum(t, 1048576, "sha512", "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", true)
 	testChecksum(t, 1048576, "sha512", "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67a0", false)
-
-	// check unsupported
-	req, _ := NewRequest(ts.URL)
-	if err := req.SetChecksum("bad", []byte{}); err == nil {
-		t.Fatalf("Expected error for unsupported hash type, got %v", err)
-	}
 }
 
 // testSize executes a request and asserts that the file size for the downloaded
 // file does or does not match the expected size.
 func testSize(t *testing.T, url string, size uint64, match bool) {
-	req, _ := NewRequest(url)
-	req.Filename = ".testSize-mismatch-head"
+	req, _ := NewRequest(".testSize-mismatch-head", url)
 	req.Size = size
 
-	resp, err := DefaultClient.Do(req)
+	resp, _ := DefaultClient.Do(req)
+	err := resp.Err()
 	if match {
 		if err != nil {
 			t.Errorf(err.Error())
@@ -267,16 +272,17 @@ func TestAutoResume(t *testing.T) {
 	for i := 0; i < segs; i++ {
 		// request larger segment
 		segsize := (i + 1) * (size / segs)
-		req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", segsize))
-		req.Filename = filename
+		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", segsize))
 
 		// checksum the last request
 		if i == segs-1 {
-			req.SetChecksum("sha256", sum)
+			req.Hash = sha256.New()
+			req.Checksum = sum
 		}
 
 		// transfer
-		if resp, err := DefaultClient.Do(req); err != nil {
+		resp, _ := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
 			t.Errorf("Error segment %d (%d bytes): %v", i+1, segsize, err)
 			break
 		} else {
@@ -311,10 +317,7 @@ func TestAutoResume(t *testing.T) {
 	// error if existing file is larger than requested file
 	{
 		// request smaller segment
-		req, _ := NewRequest(ts.URL + fmt.Sprintf("?size=%d", size/segs))
-		req.Filename = filename
-
-		// transfer
+		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size/segs))
 		if _, err := DefaultClient.Do(req); !IsContentLengthMismatch(err) {
 			t.Errorf("Expected bad length error, got: %v", err)
 		}
@@ -333,14 +336,12 @@ func TestSkipExisting(t *testing.T) {
 	defer os.Remove(filename)
 
 	// download a file
-	req, _ := NewRequest(ts.URL)
-	req.Filename = filename
+	req, _ := NewRequest(filename, ts.URL)
 	resp, _ := DefaultClient.Do(req)
 	testComplete(t, resp)
 
 	// redownload
-	req, _ = NewRequest(ts.URL)
-	req.Filename = filename
+	req, _ = NewRequest(filename, ts.URL)
 	resp, _ = DefaultClient.Do(req)
 	testComplete(t, resp)
 
@@ -355,10 +356,9 @@ func TestSkipExisting(t *testing.T) {
 	}
 
 	// ensure checksum is performed on pre-existing file
-	req, _ = NewRequest(ts.URL)
-	req.Filename = filename
-	sum, _ := hex.DecodeString("badd")
-	req.SetChecksum("sha256", sum)
+	req, _ = NewRequest(filename, ts.URL)
+	req.Hash = sha256.New()
+	req.Checksum, _ = hex.DecodeString("badd")
 
 	_, err := DefaultClient.Do(req)
 	if err == nil || !IsChecksumMismatch(err) {
@@ -377,38 +377,35 @@ func TestBatch(t *testing.T) {
 	// test with 4 workers and with one per request
 	for _, workerCount := range []int{4, 0} {
 		// create requests
-		done := make(chan *Response, 0)
 		reqs := make([]*Request, tests)
 		for i := 0; i < len(reqs); i++ {
-			reqs[i], _ = NewRequest(ts.URL + fmt.Sprintf("/request_%d?size=%d&sleep=10", i, size))
+			filename := fmt.Sprintf(".testBatch.%d", i+1)
+			reqs[i], _ = NewRequest(filename, ts.URL+fmt.Sprintf("/request_%d?size=%d&sleep=10", i, size))
 			reqs[i].Label = fmt.Sprintf("Test %d", i+1)
-			reqs[i].Filename = fmt.Sprintf(".testBatch.%d", i+1)
-			reqs[i].NotifyOnClose = done
-			if err := reqs[i].SetChecksum("sha256", sumb); err != nil {
-				t.Fatal(err.Error())
-			}
+			reqs[i].Hash = sha256.New()
+			reqs[i].Checksum = sumb
 		}
 
 		// batch run
 		responses := DefaultClient.DoBatch(workerCount, reqs...)
 
 		// listen for responses
+	Loop:
 		for i := 0; i < len(reqs); {
 			select {
-			case <-responses:
-				// swallow responses channel for newly initiated responses
+			case resp := <-responses:
+				if resp == nil {
+					break Loop
+				}
 
-			case resp := <-done:
 				testComplete(t, resp)
-
-				// handle errors
-				if resp.Error != nil {
-					t.Errorf("%s: %v", resp.Filename, resp.Error)
+				if err := resp.Err(); err != nil {
+					t.Errorf("%s: %v", resp.Filename, err)
 				}
 
 				// remove test file
-				if resp.IsComplete() && resp.Error == nil {
-					os.Remove(resp.Filename)
+				if resp.IsComplete() {
+					os.Remove(resp.Filename) // ignore errors
 				}
 				i++
 			}
@@ -422,8 +419,13 @@ func TestCancel(t *testing.T) {
 	client := NewClient()
 
 	// slow request
-	req, _ := NewRequest(ts.URL + "/.testCancel?sleep=2000")
-	ch := client.DoAsync(req)
+	req, _ := NewRequest("", ts.URL+"/.testCancel?sleep=2000")
+	ch := make(chan *Response, 1)
+	go func() {
+		resp, _ := client.Do(req)
+		ch <- resp
+		close(ch)
+	}()
 
 	// sleep and cancel before request is served
 	time.Sleep(500 * time.Millisecond)
@@ -434,9 +436,9 @@ func TestCancel(t *testing.T) {
 	testComplete(t, resp)
 
 	// validate error
-	if resp.Error == nil ||
-		!(strings.Contains(resp.Error.Error(), "request canceled") || strings.Contains(resp.Error.Error(), "use of closed network connection")) {
-		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Error)
+	if resp.Err() == nil ||
+		!(strings.Contains(resp.Err().Error(), "request canceled") || strings.Contains(resp.Err().Error(), "use of closed network connection")) {
+		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Err())
 	}
 }
 
@@ -446,11 +448,9 @@ func TestCancelInProcess(t *testing.T) {
 	client := NewClient()
 
 	// large file request
-	req, _ := NewRequest(ts.URL + "/.testCancelInProcess?size=134217728")
-	done := make(chan *Response)
-	req.NotifyOnClose = done
+	req, _ := NewRequest("", ts.URL+"/.testCancelInProcess?size=134217728")
 
-	resp := <-client.DoAsync(req)
+	resp, _ := client.Do(req)
 
 	// wait until some data is transferred
 	for resp.BytesTransferred() < 1048576 {
@@ -459,15 +459,12 @@ func TestCancelInProcess(t *testing.T) {
 
 	// cancel request
 	client.CancelRequest(req)
-
-	// wait for closure
-	<-done
 	testComplete(t, resp)
 
 	// validate error
-	if resp.Error == nil ||
-		!(strings.Contains(resp.Error.Error(), "request canceled") || strings.Contains(resp.Error.Error(), "use of closed network connection")) {
-		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Error)
+	if resp.Err() == nil ||
+		!(strings.Contains(resp.Err().Error(), "request canceled") || strings.Contains(resp.Err().Error(), "use of closed network connection")) {
+		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Err())
 	}
 
 	// delete downloaded file

@@ -57,153 +57,93 @@ func (c *Client) CancelRequest(req *Request) {
 // An error is returned if caused by client policy (such as CheckRedirect), or
 // if there was an HTTP protocol error.
 //
-// Do is a synchronous, blocking operation which returns only once a download
-// request is completed or fails. For non-blocking operations which enable the
-// monitoring of transfers in process, see DoAsync and DoBatch.
+// Like http.Get, Do blocks while the transfer is initiated, but returns as soon
+// as the transfer has started in the background or failed early.
 func (c *Client) Do(req *Request) (*Response, error) {
 	// prepare request with HEAD request
 	resp, err := c.do(req)
 	if err != nil {
 		return resp, err
 	}
-
-	// transfer content
-	if !resp.IsComplete() {
-		if err := resp.copy(); err != nil {
-			return resp, err
-		}
-	}
+	go resp.copy()
 
 	return resp, nil
 }
 
-// DoAsync sends a file transfer request and returns a channel to receive the
-// file transfer response context.
+// DoChannel executes all requests sent through the given Request channel, until
+// it is closed by another goroutine. The caller is blocked until the Request
+// channel is closed and all transfers have completed. All responses are sent
+// through the given Response channel as they begin transfer.
 //
-// The Response is sent via the returned channel and the channel closed as soon
-// as the HTTP/1.1 GET request has been served; before the file transfer begins.
+// Slow Response receivers will cause a worker to block and therefore delay the
+// start of the transfer for an already initiated connection, potentially
+// causing a server timeout. It is the caller's responsibility to ensure a
+// sufficient buffer size is used for the Response channel.
 //
-// The Response may then be used to monitor the progress of the file transfer
-// while it is in process.
-//
-// Any error which occurs during the file transfer will be set in the returned
-// Response.Error field as soon as the Response.IsComplete method returns true.
-func (c *Client) DoAsync(req *Request) <-chan *Response {
-	r := make(chan *Response, 1)
-	go func() {
-		// prepare request with HEAD request
-		resp, err := c.do(req)
-		if err == nil && !resp.IsComplete() {
-			// transfer data in new goroutine
-			go resp.copy()
-		}
-
-		r <- resp
-		close(r)
-	}()
-
-	return r
+// If an error occurs during any of the file transfers it will be accessible via
+// the associated Response.Err function.
+func (c *Client) DoChannel(reqch <-chan *Request, respch chan<- *Response) {
+	// TODO: enable cancelling of batch jobs
+	for req := range reqch {
+		resp, _ := c.Do(req)
+		respch <- resp
+		resp.Wait()
+	}
 }
 
-// DoBatch executes multiple requests with the given number of workers and
-// immediately returns a channel to receive the Responses as they become
-// available. Excess requests are queued until a worker becomes available. The
-// channel is closed once all responses have been sent.
+// DoBatch executes all the given requests using the given number of concurrent
+// workers. Control is passed back to the caller as soon as the workers are
+// initiated.
 //
-// If zero is given as the worker count, one worker will be created for each
-// given request and all requests will start at the same time.
+// If the requested number of workers is less than one, a worker will be created
+// for every request. I.e. all requests will be executed concurrently.
 //
-// Each response is sent through the channel once the request is initiated via
-// HTTP GET or an error has occurred, but before the file transfer begins.
+// If an error occurs during any of the file transfers it will be accessible via
+// the associated Response.Err function.
 //
-// Any error which occurs during any of the file transfers will be set in the
-// associated Response.Error field as soon as the Response.IsComplete method
-// returns true.
-func (c *Client) DoBatch(workers int, reqs ...*Request) <-chan *Response {
-	// TODO: enable cancelling of batch jobs
-
-	// default one worker per request
-	if workers == 0 {
-		workers = len(reqs)
+// The returned Response channel is closed only after all of the requested
+// transfers are completed.
+func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
+	if workers < 1 {
+		workers = len(requests)
 	}
-
-	// start work queue
-	producer := make(chan *Request, 0)
-	go func() {
-		// feed queue
-		for i := 0; i < len(reqs); i++ {
-			producer <- reqs[i]
-		}
-		close(producer)
-	}()
-
-	return c.DoChannel(workers, producer)
-}
-
-// DoChannel executes multiple requests with the given number of workers and
-// immediately returns a channel to receive the Responses as they become
-// available. Excess requests are queued until a worker becomes available. The
-// channel is closed once the reqs channel is closed and all responses have been sent.
-//
-// If zero is given as the worker count, one worker will be created.
-//
-// Each response is sent through the channel once the request is initiated via
-// HTTP GET or an error has occurred, but before the file transfer begins.
-//
-// Any error which occurs during any of the file transfers will be set in the
-// associated Response.Error field as soon as the Response.IsComplete method
-// returns true.
-func (c *Client) DoChannel(workers int, reqs <-chan *Request) <-chan *Response {
-	// TODO: enable cancelling of batch jobs
-
-	// default one worker
-	if workers == 0 {
-		workers = 1
-	}
-
-	responses := make(chan *Response, workers)
-	wg := sync.WaitGroup{}
 
 	// start workers
+	reqch := make(chan *Request, len(requests))
+	respch := make(chan *Response, len(requests))
+	wg := sync.WaitGroup{}
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func(i int) {
-			// work until reqs is dried up
-			for req := range reqs {
-				// set up notifier
-				req.notifyOnCloseInternal = make(chan *Response, 1)
-
-				// start request
-				resp := <-c.DoAsync(req)
-
-				// ship state to caller
-				responses <- resp
-
-				// wait for async op to finish before moving to next request
-				<-req.notifyOnCloseInternal
-			}
-
-			// signal worker is done
+		go func() {
+			c.DoChannel(reqch, respch)
 			wg.Done()
-		}(i)
+		}()
 	}
 
 	go func() {
-		// close channel when all workers are finished
+		// send requests
+		for _, req := range requests {
+			reqch <- req
+		}
+		close(reqch)
+
+		// wait for transfers to complete
 		wg.Wait()
-		close(responses)
+		close(respch)
 	}()
 
-	return responses
+	return respch
 }
 
 // do creates a Response context for the given request using a HTTP HEAD
-// request to the remote server.
+// request to the remote server. It does not transfer any body content as this
+// may be preferable in a separate goroutine.
 func (c *Client) do(req *Request) (*Response, error) {
 	// create a response
 	resp := &Response{
 		Request:    req,
 		Start:      time.Now(),
+		Done:       make(chan struct{}, 0),
 		bufferSize: req.BufferSize,
 	}
 
@@ -355,6 +295,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 	}
 
 	// response context is ready to start transfer with resp.copy()
+	req.notify(resp)
 	return resp, nil
 }
 

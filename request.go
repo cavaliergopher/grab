@@ -1,14 +1,10 @@
 package grab
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"fmt"
 	"hash"
 	"net/http"
 	"net/url"
+	"sync"
 )
 
 // A Request represents an HTTP file transfer request to be sent by a Client.
@@ -50,7 +46,7 @@ type Request struct {
 	// BufferSize specifies the size in bytes of the buffer that is used for
 	// transferring the requested file. Larger buffers may result in faster
 	// throughput but will use more memory and result in less frequent updates
-	// to the transfer progress statistics. Default: 4096.
+	// to the transfer progress statistics. Default: 32KB.
 	BufferSize uint
 
 	// Hash specifies the hashing algorithm that will be used to compute the
@@ -68,18 +64,14 @@ type Request struct {
 	// it fails checksum validation.
 	RemoveOnError bool
 
-	// NotifyOnClose specifies a channel that will notified when the requested
-	// transfer is completed, either successfully or with an error.
-	NotifyOnClose chan<- *Response
-
-	// notifyOnCloseInternal is the same as NotifyOnClose but for private
-	// internal use.
-	notifyOnCloseInternal chan *Response
+	// handlers are registered via Request.Notify
+	handlersMu sync.Mutex
+	handlers   []chan<- *Response
 }
 
 // NewRequest returns a new file transfer Request suitable for use with
 // Client.Do.
-func NewRequest(urlStr string) (*Request, error) {
+func NewRequest(dst, urlStr string) (*Request, error) {
 	// create http request
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -88,37 +80,44 @@ func NewRequest(urlStr string) (*Request, error) {
 
 	return &Request{
 		HTTPRequest: req,
+		Filename:    dst,
 	}, nil
 }
 
 // URL returns the URL to be requested from the remote server.
-func (c *Request) URL() *url.URL {
-	return c.HTTPRequest.URL
+func (r *Request) URL() *url.URL {
+	return r.HTTPRequest.URL
 }
 
-// SetChecksum sets the expected checksum value and hashing algorithm to use
-// when validating a completed file transfer.
+// Notify causes a Client to send a Response down the given channel, as soon as
+// as a response header is received from the remote server (before file transfer
+// begins).
 //
-// The following hashing algorithms are supported:
-//	md5
-//	sha1
-//	sha256
-//	sha512
-func (c *Request) SetChecksum(algorithm string, checksum []byte) error {
-	switch algorithm {
-	case "md5":
-		c.Hash = md5.New()
-	case "sha1":
-		c.Hash = sha1.New()
-	case "sha256":
-		c.Hash = sha256.New()
-	case "sha512":
-		c.Hash = sha512.New()
-	default:
-		return fmt.Errorf("Unsupported hashing algorithm: %s", algorithm)
+// Notifications will be discarded if the given channel has insufficient buffer
+// space for slow receivers.
+func (r *Request) Notify(c chan<- *Response) {
+	r.handlersMu.Lock()
+	defer r.handlersMu.Unlock()
+	if r.handlers == nil {
+		r.handlers = make([]chan<- *Response, 0)
 	}
+	r.handlers = append(r.handlers, c)
+}
 
-	c.Checksum = checksum
-
-	return nil
+// notify sends the given Response to all channels registered with Notify.
+func (r *Request) notify(resp *Response) {
+	r.handlersMu.Lock()
+	defer r.handlersMu.Unlock()
+	if r.handlers != nil {
+		for _, h := range r.handlers {
+			// We don't want to block here. It is the caller's responsibility to make
+			// sure the channel has enough buffer space.
+			select {
+			case h <- resp:
+				// ok
+			default:
+				// discarding notification
+			}
+		}
+	}
 }

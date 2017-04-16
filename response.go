@@ -13,9 +13,10 @@ import (
 // Response represents the response to a completed or in-process download
 // request.
 //
-// For asynchronous operations, the Response also provides context for the file
-// transfer while it is process. All functions are safe to use from multiple
-// go-routines.
+// A response may be returned as soon a HTTP response is received from a remote
+// server, but before the body content has started transferring.
+//
+// All Response method calls are thread-safe.
 type Response struct {
 	// bytesTransferred specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
@@ -24,12 +25,9 @@ type Response struct {
 	// https://github.com/cavaliercoder/grab/issues/4
 	bytesTransferred uint64
 
-	// doneFlag is incremented once the transfer is finalized, either
-	// successfully or with errors.
-	//
-	// Must be 64bit aligned as per
-	// https://github.com/cavaliercoder/grab/issues/4
-	doneFlag int32
+	// Done is closed once the transfer is finalized, either successfully or with
+	// errors.
+	Done chan struct{}
 
 	// The Request that was sent to obtain this Response.
 	Request *Request
@@ -51,7 +49,7 @@ type Response struct {
 	// transfer.
 	//
 	// This should not be read until IsComplete returns true.
-	Error error
+	err error
 
 	// Start specifies the time at which the file transfer started.
 	Start time.Time
@@ -77,11 +75,30 @@ type Response struct {
 	bufferSize uint
 }
 
+// Err blocks until the underlying file transfer is completed and returns any
+// error that may have occcurred or nil. If the transfer is already completed,
+// Err returns immediately.
+func (c *Response) Err() error {
+	c.Wait()
+	return c.err
+}
+
+// Wait blocks until the underlying file transfer is completed. If the transfer
+// is already completed, Wait returns immediately.
+func (c *Response) Wait() {
+	<-c.Done
+}
+
 // IsComplete indicates whether the Response transfer context has completed with
 // either a success or failure. If the transfer was unsuccessful, Response.Error
 // will be non-nil.
 func (c *Response) IsComplete() bool {
-	return atomic.LoadInt32(&c.doneFlag) > 0
+	select {
+	case <-c.Done:
+		return true
+	default:
+		return false
+	}
 }
 
 // BytesTransferred returns the number of bytes which have already been
@@ -150,13 +167,17 @@ func (c *Response) AverageBytesPerSecond() float64 {
 
 // copy transfers content for a HTTP connection established via Client.do()
 func (c *Response) copy() error {
+	if c.IsComplete() {
+		return c.err
+	}
+
 	// close writer when finished
 	defer c.writer.Close()
 
 	// set transfer buffer size
 	bufferSize := c.bufferSize
 	if bufferSize == 0 {
-		bufferSize = 4096
+		bufferSize = 32 * 1024
 	}
 
 	// download and update progress
@@ -246,23 +267,13 @@ func (c *Response) close(err error) error {
 	}
 
 	// set result error (if any)
-	c.Error = err
+	c.err = err
 
 	// stop time
 	c.End = time.Now()
 
-	// set done flag
-	atomic.AddInt32(&c.doneFlag, 1)
+	// flag done
+	close(c.Done)
 
-	// notify
-	if c.Request.notifyOnCloseInternal != nil {
-		c.Request.notifyOnCloseInternal <- c
-	}
-
-	if c.Request.NotifyOnClose != nil {
-		c.Request.NotifyOnClose <- c
-	}
-
-	// pass error back to caller
 	return err
 }
