@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"os"
 	"strings"
 	"testing"
@@ -137,20 +138,24 @@ func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
 	defer os.Remove(filename)
 
 	// create request
-	req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size))
-	req.Checksum, _ = hex.DecodeString(sum)
+	var h hash.Hash
+	b, _ := hex.DecodeString(sum)
 	switch algorithm {
 	case "md5":
-		req.Hash = md5.New()
+		h = md5.New()
 	case "sha1":
-		req.Hash = sha1.New()
+		h = sha1.New()
 	case "sha256":
-		req.Hash = sha256.New()
+		h = sha256.New()
 	case "sha512":
-		req.Hash = sha512.New()
+		h = sha512.New()
+	default:
+		panic("unknown hash")
 	}
 
 	// fetch
+	req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size))
+	req.SetChecksum(h, b, true)
 	resp, _ := DefaultClient.Do(req)
 	err := resp.Err()
 	if err != nil {
@@ -276,8 +281,7 @@ func TestAutoResume(t *testing.T) {
 
 		// checksum the last request
 		if i == segs-1 {
-			req.Hash = sha256.New()
-			req.Checksum = sum
+			req.SetChecksum(sha256.New(), sum, false)
 		}
 
 		// transfer
@@ -357,8 +361,7 @@ func TestSkipExisting(t *testing.T) {
 
 	// ensure checksum is performed on pre-existing file
 	req, _ = NewRequest(filename, ts.URL)
-	req.Hash = sha256.New()
-	req.Checksum, _ = hex.DecodeString("badd")
+	req.SetChecksum(sha256.New(), []byte{0x01, 0x02, 0x03, 0x04}, true)
 
 	_, err := DefaultClient.Do(req)
 	if err == nil || !IsChecksumMismatch(err) {
@@ -382,8 +385,7 @@ func TestBatch(t *testing.T) {
 			filename := fmt.Sprintf(".testBatch.%d", i+1)
 			reqs[i], _ = NewRequest(filename, ts.URL+fmt.Sprintf("/request_%d?size=%d&sleep=10", i, size))
 			reqs[i].Label = fmt.Sprintf("Test %d", i+1)
-			reqs[i].Hash = sha256.New()
-			reqs[i].Checksum = sumb
+			reqs[i].SetChecksum(sha256.New(), sumb, false)
 		}
 
 		// batch run

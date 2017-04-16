@@ -220,29 +220,28 @@ func (c *Response) copy() error {
 
 // checksum validates a completed file transfer.
 func (c *Response) checksum() error {
-	// no error if hash not set
-	if c.Request.Hash == nil || c.Request.Checksum == nil {
+	if c.Request.hash == nil {
 		return nil
 	}
 
 	// open downloaded file
+	// TODO: compute hash during file transfer
 	f, err := os.Open(c.Filename)
 	if err != nil {
 		return err
 	}
-
 	defer f.Close()
 
 	// hash file
-	if _, err := io.Copy(c.Request.Hash, f); err != nil {
+	if _, err := io.Copy(c.Request.hash, f); err != nil {
 		return err
 	}
 
 	// compare checksum
-	sum := c.Request.Hash.Sum(nil)
-	if !bytes.Equal(sum, c.Request.Checksum) {
+	sum := c.Request.hash.Sum(nil)
+	if !bytes.Equal(sum, c.Request.checksum) {
 		// delete file
-		if c.Request.RemoveOnError {
+		if c.Request.deleteOnError {
 			f.Close()
 			os.Remove(c.Filename)
 		}

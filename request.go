@@ -49,20 +49,10 @@ type Request struct {
 	// to the transfer progress statistics. Default: 32KB.
 	BufferSize uint
 
-	// Hash specifies the hashing algorithm that will be used to compute the
-	// checksum value of the transferred file.
-	//
-	// If Checksum or Hash is nil, no checksum validation occurs.
-	Hash hash.Hash
-
-	// Checksum specifies the expected checksum value of the transferred file.
-	//
-	// If Checksum or Hash is nil, no checksum validation occurs.
-	Checksum []byte
-
-	// RemoveOnError specifies that any completed download should be deleted if
-	// it fails checksum validation.
-	RemoveOnError bool
+	// hash, checksum and deleteOnError are set via SetChecksum.
+	hash          hash.Hash
+	checksum      []byte
+	deleteOnError bool
 
 	// handlers are registered via Request.Notify
 	handlersMu sync.Mutex
@@ -87,6 +77,29 @@ func NewRequest(dst, urlStr string) (*Request, error) {
 // URL returns the URL to be requested from the remote server.
 func (r *Request) URL() *url.URL {
 	return r.HTTPRequest.URL
+}
+
+// SetChecksum sets the desired checksum and hashing algorithm for a file
+// transfer request. Once the transfer is complete, the given hashing algorithm
+// will be used to compute the checksum of the transferred file. The hash will
+// then be compared with the given hash. If the hashes do not match, an error
+// will be returned by the associated Response.Err method.
+//
+// If deleteOnError is true, the transferred file will be deleted automatically
+// if it fails checksum validation.
+//
+// The given hash must be unique to this request to prevent corruption from
+// other requests in other goroutines. E.g. Sha256.New.
+//
+// To disable checksum validation (default), call SetChecksum with a nil hash.
+func (r *Request) SetChecksum(h hash.Hash, sum []byte, deleteOnError bool) {
+	if h == nil {
+		h, sum, deleteOnError = nil, nil, false
+	}
+
+	r.hash = h
+	r.checksum = sum
+	r.deleteOnError = deleteOnError
 }
 
 // Notify causes a Client to send a Response down the given channel, as soon as
