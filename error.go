@@ -25,7 +25,7 @@ func (c *grabError) Error() string {
 
 // newGrabError creates a new grabError instance with the given code and
 // message.
-func newGrabError(code int, format string, a ...interface{}) error {
+func errorf(code int, format string, a ...interface{}) error {
 	return &grabError{
 		err:  fmt.Sprintf(format, a...),
 		code: code,

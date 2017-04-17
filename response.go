@@ -246,7 +246,7 @@ func (c *Response) checksum() error {
 			os.Remove(c.Filename)
 		}
 
-		return newGrabError(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum))
+		return errorf(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum))
 	}
 
 	return nil

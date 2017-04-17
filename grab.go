@@ -23,7 +23,6 @@ resuming interrupted downloads, grab will resume downloading from the end of the
 partial file. If the server does not support resumed downloads, the file will be
 retransferred in its entirety. If the file is already complete, grab will return
 successfully.
-
 */
 package grab
 
@@ -32,17 +31,15 @@ import (
 	"os"
 )
 
-// Get sends a file transfer request and returns a file transfer response
-// context, following policy (e.g. redirects, cookies, auth) as configured on
-// the client's HTTPClient.
+// Get sends a HTTP request and downloads the content of the requested URL to
+// the given destination file path. The caller is blocked until the download is
+// completed, successfully or otherwise.
 //
 // An error is returned if caused by client policy (such as CheckRedirect), or
-// if there was an HTTP protocol error.
+// if there was an HTTP protocol or IO error.
 //
-// Get blocks until a download request is completed or fails. For non-blocking
-// operations which enable the monitoring of transfers in process, see GetAsync, GetBatch or use a Client.
-//
-// Get is a wrapper for DefaultClient.Do.
+// For non-blocking calls or control over HTTP client headers, redirect policy,
+// and other settings, create a Client instead.
 func Get(dst, urlStr string) (*Response, error) {
 	req, err := NewRequest(dst, urlStr)
 	if err != nil {
@@ -50,11 +47,23 @@ func Get(dst, urlStr string) (*Response, error) {
 	}
 
 	resp := DefaultClient.Do(req)
-	return resp, resp.Err() // resp.Err will block until complete
+	return resp, resp.Err()
 }
 
-// GetBatch send multiple file transfer requests and returns a channel through
-// which all Response transfer contexts will be returned.
+// GetBatch sends multiple HTTP requests and downloads the content of the
+// requested URLs to the given destination directory using the given number of
+// concurrent worker goroutines.
+//
+// The Response context for each requested URL is sent through the returned
+// Response channel, as soon as a worker receives a response from the remote
+// server. The Response can then be used to track the progress of the download
+// while it is in progress.
+//
+// The returned Repsonse channel will be closed by Grab, only once all downloads
+// have completed or failed.
+//
+// If an error occurs during any download, it will be available via call to the
+// associated Response.Err.
 func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, error) {
 	fi, err := os.Stat(dst)
 	if err != nil {

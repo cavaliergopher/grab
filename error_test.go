@@ -10,8 +10,8 @@ func TestErrors(t *testing.T) {
 	msg := "error message"
 
 	errs := []error{
-		fmt.Errorf(msg),       // test non-grab errors
-		newGrabError(-1, msg), // test grab error
+		fmt.Errorf(msg), // test non-grab errors
+		errorf(-1, msg), // test grab error
 	}
 
 	for _, err := range errs {
@@ -36,19 +36,19 @@ func TestErrors(t *testing.T) {
 		}
 	}
 
-	if err := newGrabError(errBadDestination, msg); !IsBadDestination(err) {
+	if err := errorf(errBadDestination, msg); !IsBadDestination(err) {
 		t.Errorf("Error should identify as a bad destination error")
 	}
 
-	if err := newGrabError(errBadLength, msg); !IsContentLengthMismatch(err) {
+	if err := errorf(errBadLength, msg); !IsContentLengthMismatch(err) {
 		t.Errorf("Error should identify as a content length mismatch")
 	}
 
-	if err := newGrabError(errChecksumMismatch, msg); !IsChecksumMismatch(err) {
+	if err := errorf(errChecksumMismatch, msg); !IsChecksumMismatch(err) {
 		t.Errorf("Error should identify as a checksum mismatch")
 	}
 
-	if err := newGrabError(errNoFilename, msg); !IsNoFilename(err) {
+	if err := errorf(errNoFilename, msg); !IsNoFilename(err) {
 		t.Errorf("Error should identify as a missing filename error")
 	}
 }

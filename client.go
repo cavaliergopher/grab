@@ -68,15 +68,17 @@ func (c *Client) Do(req *Request) *Response {
 	return resp
 }
 
-// DoChannel executes all requests sent through the given Request channel, until
-// it is closed by another goroutine. The caller is blocked until the Request
-// channel is closed and all transfers have completed. All responses are sent
-// through the given Response channel as they begin transfer.
+// DoChannel executes all requests sent through the given Request channel, one
+// at a time, until it is closed by another goroutine. The caller is blocked
+// until the Request channel is closed and all transfers have completed. All
+// responses are sent through the given Response channel as soon as they are
+// received from the remote servers and can be used to track the progress of
+// each download.
 //
 // Slow Response receivers will cause a worker to block and therefore delay the
 // start of the transfer for an already initiated connection, potentially
 // causing a server timeout. It is the caller's responsibility to ensure a
-// sufficient buffer size is used for the Response channel.
+// sufficient buffer size is used for the Response channel to prevent this.
 //
 // If an error occurs during any of the file transfers it will be accessible via
 // the associated Response.Err function.
@@ -97,10 +99,10 @@ func (c *Client) DoChannel(reqch <-chan *Request, respch chan<- *Response) {
 // for every request. I.e. all requests will be executed concurrently.
 //
 // If an error occurs during any of the file transfers it will be accessible via
-// the associated Response.Err function.
+// call to the associated Response.Err.
 //
-// The returned Response channel is closed only after all of the requested
-// transfers are completed.
+// The returned Response channel is closed only after all of the given Requests
+// have completed, successfully or otherwise.
 func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 	if workers < 1 {
 		workers = len(requests)
@@ -208,7 +210,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 
 			// check content length matches expected length
 			if req.Size > 0 && hresp.ContentLength > 0 && req.Size != resp.Size {
-				resp.close(newGrabError(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
+				resp.close(errorf(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
 				return
 			}
 
@@ -237,7 +239,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 
 				// check if existing file is larger than expected
 				if uint64(fi.Size()) > resp.Size {
-					resp.close(newGrabError(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
+					resp.close(errorf(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
 					return
 				}
 
@@ -355,7 +357,7 @@ func computeFilename(req *Request, resp *Response) error {
 
 	// too bad if no filename found yet
 	if resp.Filename == "" {
-		return newGrabError(errNoFilename, "No filename could be determined")
+		return errorf(errNoFilename, "No filename could be determined")
 	}
 
 	return nil
