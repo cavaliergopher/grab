@@ -18,17 +18,6 @@ import (
 //
 // All Response method calls are thread-safe.
 type Response struct {
-	// bytesTransferred specifies the number of bytes which have already been
-	// transferred and should only be accessed atomically.
-	//
-	// Must be 64bit aligned as per
-	// https://github.com/cavaliercoder/grab/issues/4
-	bytesTransferred uint64
-
-	// Done is closed once the transfer is finalized, either successfully or with
-	// errors.
-	Done chan struct{}
-
 	// The Request that was sent to obtain this Response.
 	Request *Request
 
@@ -45,12 +34,6 @@ type Response struct {
 	// Size specifies the total expected size of the file transfer.
 	Size uint64
 
-	// Error specifies any error that may have occurred during the file
-	// transfer.
-	//
-	// This should not be read until IsComplete returns true.
-	err error
-
 	// Start specifies the time at which the file transfer started.
 	Start time.Time
 
@@ -63,6 +46,10 @@ type Response struct {
 	// incomplete transfer.
 	DidResume bool
 
+	// Done is closed once the transfer is finalized, either successfully or with
+	// errors.
+	Done chan struct{}
+
 	// writer is the file handle used to write the downloaded file to local
 	// storage
 	writer io.WriteCloser
@@ -71,22 +58,32 @@ type Response struct {
 	// transferred before this transfer began.
 	bytesResumed uint64
 
+	// bytesTransferred specifies the number of bytes which have already been
+	// transferred and should only be accessed atomically.
+	bytesTransferred uint64
+
 	// bufferSize specifies the site in bytes of the transfer buffer.
 	bufferSize uint
-}
 
-// Err blocks the calling goroutine until the underlying file transfer is
-// completed and returns any error that may have occurred or nil. If the
-// transfer is already completed, Err returns immediately.
-func (c *Response) Err() error {
-	c.Wait()
-	return c.err
+	// Error specifies any error that may have occurred during the file
+	// transfer.
+	//
+	// This should not be read until IsComplete returns true.
+	err error
 }
 
 // Wait blocks until the underlying file transfer is completed. If the transfer
 // is already completed, Wait returns immediately.
 func (c *Response) Wait() {
 	<-c.Done
+}
+
+// Err blocks the calling goroutine until the underlying file transfer is
+// completed and returns any error that may have occurred or nil. If the
+// transfer is already completed, Err returns immediately.
+func (c *Response) Err() error {
+	<-c.Done
+	return c.err
 }
 
 // IsComplete indicates whether the Response transfer context has completed with
@@ -171,50 +168,38 @@ func (c *Response) copy() error {
 		return c.err
 	}
 
-	// close writer when finished
-	defer c.writer.Close()
-
-	// set transfer buffer size
-	bufferSize := c.bufferSize
-	if bufferSize == 0 {
-		bufferSize = 32 * 1024
+	if c.bufferSize < 1 {
+		c.bufferSize = 32 * 1024
 	}
 
 	// download and update progress
-	buffer := make([]byte, bufferSize)
-	complete := false
-	for complete == false {
+	buffer := make([]byte, c.bufferSize)
+	for {
 		// read HTTP stream
-		n, err := c.HTTPResponse.Body.Read(buffer[:])
+		n, err := c.HTTPResponse.Body.Read(buffer)
 		if err != nil && err != io.EOF {
 			return c.close(err)
 		}
 
-		// write to file
+		// write output stream
 		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
 			return c.close(werr)
 		}
-
-		// increment progress
 		atomic.AddUint64(&c.bytesTransferred, uint64(n))
 
 		// break when finished
 		if err == io.EOF {
-			// download is ready for checksum validation
 			c.HTTPResponse.Body.Close()
 			c.writer.Close()
-			complete = true
+			break
 		}
 	}
 
 	// validate checksum
-	if complete {
-		if err := c.checksum(); err != nil {
-			return c.close(err)
-		}
+	if err := c.checksum(); err != nil {
+		return c.close(err)
 	}
 
-	// finalize
 	return c.close(nil)
 }
 
@@ -225,7 +210,6 @@ func (c *Response) checksum() error {
 	}
 
 	// open downloaded file
-	// TODO: compute hash during file transfer
 	f, err := os.Open(c.Filename)
 	if err != nil {
 		return err
@@ -240,38 +224,35 @@ func (c *Response) checksum() error {
 	// compare checksum
 	sum := c.Request.hash.Sum(nil)
 	if !bytes.Equal(sum, c.Request.checksum) {
-		// delete file
 		if c.Request.deleteOnError {
-			f.Close()
 			os.Remove(c.Filename)
 		}
 
-		return errorf(errChecksumMismatch, "Checksum mismatch: %v", hex.EncodeToString(sum))
+		return errorf(errChecksumMismatch, "checksum mismatch: %v, wanted %v",
+			hex.EncodeToString(sum),
+			hex.EncodeToString(c.Request.checksum))
 	}
 
 	return nil
 }
 
-// close finalizes the response context
+// close finalizes the Response
 func (c *Response) close(err error) error {
-	// close writer
+	if c.IsComplete() {
+		panic("Response already closed")
+	}
+
 	if c.writer != nil {
 		c.writer.Close()
 		c.writer = nil
 	}
 
-	// close response body
 	if c.HTTPResponse != nil && c.HTTPResponse.Body != nil {
 		c.HTTPResponse.Body.Close()
 	}
 
-	// set result error (if any)
 	c.err = err
-
-	// stop time
 	c.End = time.Now()
-
-	// flag done
 	close(c.Done)
 
 	return err

@@ -19,7 +19,7 @@ import (
 // testComplete validates that a completed transfer response has all the desired
 // fields filled.
 func testComplete(t *testing.T, resp *Response) {
-	resp.Wait()
+	<-resp.Done
 	if !resp.IsComplete() {
 		t.Errorf("Response.IsComplete returned false")
 	}

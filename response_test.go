@@ -29,7 +29,7 @@ func TestResponseProgress(t *testing.T) {
 	}
 
 	// wait for transfer to complete
-	resp.Wait()
+	<-resp.Done
 
 	// make sure transfer is complete
 	if p := resp.Progress(); p != 1 {

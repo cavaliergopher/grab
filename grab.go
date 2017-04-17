@@ -59,7 +59,7 @@ func Get(dst, urlStr string) (*Response, error) {
 // server. The Response can then be used to track the progress of the download
 // while it is in progress.
 //
-// The returned Repsonse channel will be closed by Grab, only once all downloads
+// The returned Response channel will be closed by Grab, only once all downloads
 // have completed or failed.
 //
 // If an error occurs during any download, it will be available via call to the

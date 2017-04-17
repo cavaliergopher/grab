@@ -87,7 +87,7 @@ func (c *Client) DoChannel(reqch <-chan *Request, respch chan<- *Response) {
 	for req := range reqch {
 		resp := c.Do(req)
 		respch <- resp
-		resp.Wait()
+		<-resp.Done
 	}
 }
 
