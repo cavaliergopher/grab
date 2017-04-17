@@ -64,6 +64,9 @@ func Get(dst, urlStr string) (*Response, error) {
 //
 // If an error occurs during any download, it will be available via call to the
 // associated Response.Err.
+//
+// For control over HTTP client headers, redirect policy, and other settings,
+// create a Client instead.
 func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, error) {
 	fi, err := os.Stat(dst)
 	if err != nil {
