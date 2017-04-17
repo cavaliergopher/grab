@@ -24,101 +24,67 @@ Requires Go v1.4+
 
 ## Example
 
-The following code can be used to create a cut-down 'wget'-like binary which
-simply downloads each URL given on the command line to the current working
-directory.
+The following example downloads a PDF copy of the free eBook, "An Introduction
+to Programming in Go" and periodically prints the download progress until it is
+complete.
 
-Files are downloaded three at a time with progress updates printed periodically.
+The second time you run the example, it will auto-resume the previous download
+and exit sooner.
 
 ```go
 package main
 
 import (
 	"fmt"
-	"github.com/cavaliercoder/grab"
 	"os"
 	"time"
+
+	"github.com/cavaliercoder/grab"
 )
 
 func main() {
-	// validate command args
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s url [url]...\n", os.Args[0])
+	// create client
+	client := grab.NewClient()
+	req, _ := grab.NewRequest(".", "http://www.golang-book.com/public/pdf/gobook.pdf")
+
+	// start download
+	fmt.Printf("Downloading %v...\n", req.URL())
+	resp := client.Do(req)
+	fmt.Printf("  %v\n", resp.HTTPResponse.Status)
+
+	// start UI loop
+	t := time.NewTicker(500 * time.Millisecond)
+	defer t.Stop()
+
+Loop:
+	for {
+		select {
+		case <-t.C:
+			fmt.Printf("  transferred %v / %v bytes (%.2f%%)\n",
+				resp.BytesTransferred(),
+				resp.Size,
+				100*resp.Progress())
+
+		case <-resp.Done:
+			// download is complete
+			break Loop
+		}
+	}
+
+	// check for errors
+	if err := resp.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	// create a custom client
-	client := grab.NewClient()
-	client.UserAgent = "Grab example"
+	fmt.Printf("Download saved to ./%v \n", resp.Filename)
 
-	// create request for each URL given on the command line
-	reqs := make([]*grab.Request, 0)
-	for _, url := range os.Args[1:] {
-		req, err := grab.NewRequest(url)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
-		}
-
-		reqs = append(reqs, req)
-	}
-
-	// start file downloads, 3 at a time
-	fmt.Printf("Downloading %d files...\n", len(reqs))
-	respch := client.DoBatch(3, reqs...)
-
-	// start a ticker to update progress every 200ms
-	t := time.NewTicker(200 * time.Millisecond)
-
-	// monitor downloads
-	completed := 0
-	inProgress := 0
-	responses := make([]*grab.Response, 0)
-	for completed < len(reqs) {
-		select {
-		case resp := <-respch:
-			// a new response has been received and has started downloading
-			// (nil is received once, when the channel is closed by grab)
-			if resp != nil {
-				responses = append(responses, resp)
-			}
-
-		case <-t.C:
-			// clear lines
-			if inProgress > 0 {
-				fmt.Printf("\033[%dA\033[K", inProgress)
-			}
-
-			// update completed downloads
-			for i, resp := range responses {
-				if resp != nil && resp.IsComplete() {
-					// print final result
-					if resp.Error != nil {
-						fmt.Fprintf(os.Stderr, "Error downloading %s: %v\n", resp.Request.URL(), resp.Error)
-					} else {
-						fmt.Printf("Finished %s %d / %d bytes (%d%%)\n", resp.Filename, resp.BytesTransferred(), resp.Size, int(100*resp.Progress()))
-					}
-
-					// mark completed
-					responses[i] = nil
-					completed++
-				}
-			}
-
-			// update downloads in progress
-			inProgress = 0
-			for _, resp := range responses {
-				if resp != nil {
-					inProgress++
-					fmt.Printf("Downloading %s %d / %d bytes (%d%%)\033[K\n", resp.Filename, resp.BytesTransferred(), resp.Size, int(100*resp.Progress()))
-				}
-			}
-		}
-	}
-
-	t.Stop()
-
-	fmt.Printf("%d files successfully downloaded.\n", len(reqs))
+	// Output:
+	// Downloading http://www.golang-book.com/public/pdf/gobook.pdf...
+	//   200 OK
+	//   transferred 42970 / 2893557 bytes (1.49%)
+	//   transferred 1207474 / 2893557 bytes (41.73%)
+	//   transferred 2758210 / 2893557 bytes (95.32%)
+	// Download saved to ./gobook.pdf
 }
-
 ```
