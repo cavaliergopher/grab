@@ -49,9 +49,8 @@ func Get(dst, urlStr string) (*Response, error) {
 		return nil, err
 	}
 
-	resp, err := DefaultClient.Do(req)
-	resp.Wait()
-	return resp, err
+	resp := DefaultClient.Do(req)
+	return resp, resp.Err() // resp.Err will block until complete
 }
 
 // GetBatch send multiple file transfer requests and returns a channel through

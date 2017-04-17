@@ -52,7 +52,7 @@ func testComplete(t *testing.T, resp *Response) {
 // matches the given filename.
 func testFilename(t *testing.T, req *Request, filename string) {
 	// fetch
-	resp, _ := DefaultClient.Do(req)
+	resp := DefaultClient.Do(req)
 	if err := resp.Err(); err != nil {
 		t.Errorf("Error in Client.Do(): %v", err)
 	}
@@ -97,8 +97,8 @@ func TestWithURLFilename(t *testing.T) {
 // determined.
 func TestWithNoFilename(t *testing.T) {
 	req, _ := NewRequest("", ts.URL)
-	resp, err := DefaultClient.Do(req)
-	if err == nil || !IsNoFilename(err) {
+	resp := DefaultClient.Do(req)
+	if err := resp.Err(); err == nil || !IsNoFilename(err) {
 		t.Errorf("Expected no filename error, got: %v", err)
 		os.Remove(resp.Filename)
 	}
@@ -156,9 +156,8 @@ func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
 	// fetch
 	req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size))
 	req.SetChecksum(h, b, true)
-	resp, _ := DefaultClient.Do(req)
-	err := resp.Err()
-	if err != nil {
+	resp := DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
 		if !IsChecksumMismatch(err) {
 			t.Errorf("Error in Client.Do(): %v", err)
 		} else if match {
@@ -220,7 +219,7 @@ func testSize(t *testing.T, url string, size uint64, match bool) {
 	req, _ := NewRequest(".testSize-mismatch-head", url)
 	req.Size = size
 
-	resp, _ := DefaultClient.Do(req)
+	resp := DefaultClient.Do(req)
 	err := resp.Err()
 	if match {
 		if err != nil {
@@ -285,7 +284,7 @@ func TestAutoResume(t *testing.T) {
 		}
 
 		// transfer
-		resp, _ := DefaultClient.Do(req)
+		resp := DefaultClient.Do(req)
 		if err := resp.Err(); err != nil {
 			t.Errorf("Error segment %d (%d bytes): %v", i+1, segsize, err)
 			break
@@ -322,7 +321,8 @@ func TestAutoResume(t *testing.T) {
 	{
 		// request smaller segment
 		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size/segs))
-		if _, err := DefaultClient.Do(req); !IsContentLengthMismatch(err) {
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); !IsContentLengthMismatch(err) {
 			t.Errorf("Expected bad length error, got: %v", err)
 		}
 	}
@@ -341,12 +341,12 @@ func TestSkipExisting(t *testing.T) {
 
 	// download a file
 	req, _ := NewRequest(filename, ts.URL)
-	resp, _ := DefaultClient.Do(req)
+	resp := DefaultClient.Do(req)
 	testComplete(t, resp)
 
 	// redownload
 	req, _ = NewRequest(filename, ts.URL)
-	resp, _ = DefaultClient.Do(req)
+	resp = DefaultClient.Do(req)
 	testComplete(t, resp)
 
 	// ensure download was resumed
@@ -363,8 +363,8 @@ func TestSkipExisting(t *testing.T) {
 	req, _ = NewRequest(filename, ts.URL)
 	req.SetChecksum(sha256.New(), []byte{0x01, 0x02, 0x03, 0x04}, true)
 
-	_, err := DefaultClient.Do(req)
-	if err == nil || !IsChecksumMismatch(err) {
+	resp = DefaultClient.Do(req)
+	if err := resp.Err(); err == nil || !IsChecksumMismatch(err) {
 		t.Fatalf("Expected checksum error, got: %v", err)
 	}
 }
@@ -424,7 +424,7 @@ func TestCancel(t *testing.T) {
 	req, _ := NewRequest("", ts.URL+"/.testCancel?sleep=2000")
 	ch := make(chan *Response, 1)
 	go func() {
-		resp, _ := client.Do(req)
+		resp := client.Do(req)
 		ch <- resp
 		close(ch)
 	}()
@@ -452,7 +452,7 @@ func TestCancelInProcess(t *testing.T) {
 	// large file request
 	req, _ := NewRequest("", ts.URL+"/.testCancelInProcess?size=134217728")
 
-	resp, _ := client.Do(req)
+	resp := client.Do(req)
 
 	// wait until some data is transferred
 	for resp.BytesTransferred() < 1048576 {

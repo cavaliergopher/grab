@@ -75,9 +75,9 @@ type Response struct {
 	bufferSize uint
 }
 
-// Err blocks until the underlying file transfer is completed and returns any
-// error that may have occcurred or nil. If the transfer is already completed,
-// Err returns immediately.
+// Err blocks the calling goroutine until the underlying file transfer is
+// completed and returns any error that may have occurred or nil. If the
+// transfer is already completed, Err returns immediately.
 func (c *Response) Err() error {
 	c.Wait()
 	return c.err

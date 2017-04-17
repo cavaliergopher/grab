@@ -54,20 +54,18 @@ func (c *Client) CancelRequest(req *Request) {
 // context, following policy (e.g. redirects, cookies, auth) as configured on
 // the client's HTTPClient.
 //
-// An error is returned if caused by client policy (such as CheckRedirect), or
-// if there was an HTTP protocol error.
-//
 // Like http.Get, Do blocks while the transfer is initiated, but returns as soon
-// as the transfer has started in the background or failed early.
-func (c *Client) Do(req *Request) (*Response, error) {
-	// prepare request with HEAD request
-	resp, err := c.do(req)
-	if err != nil {
-		return resp, err
-	}
+// as the transfer has started transferring in a background goroutine, or if it
+// failed early.
+//
+// An error is returned via Response.Err if caused by client policy (such as
+// CheckRedirect), or if there was an HTTP protocol or IO error. Response.Err
+// will block the caller until the transfer is completed, successfully or
+// otherwise.
+func (c *Client) Do(req *Request) *Response {
+	resp := c.do(req)
 	go resp.copy()
-
-	return resp, nil
+	return resp
 }
 
 // DoChannel executes all requests sent through the given Request channel, until
@@ -85,7 +83,7 @@ func (c *Client) Do(req *Request) (*Response, error) {
 func (c *Client) DoChannel(reqch <-chan *Request, respch chan<- *Response) {
 	// TODO: enable cancelling of batch jobs
 	for req := range reqch {
-		resp, _ := c.Do(req)
+		resp := c.Do(req)
 		respch <- resp
 		resp.Wait()
 	}
@@ -138,9 +136,9 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 // do creates a Response context for the given request using a HTTP HEAD
 // request to the remote server. It does not transfer any body content as this
 // may be preferable in a separate goroutine.
-func (c *Client) do(req *Request) (*Response, error) {
+func (c *Client) do(req *Request) (resp *Response) {
 	// create a response
-	resp := &Response{
+	resp = &Response{
 		Request:    req,
 		Start:      time.Now(),
 		Done:       make(chan struct{}, 0),
@@ -155,7 +153,8 @@ func (c *Client) do(req *Request) (*Response, error) {
 		fi, err := os.Stat(req.Filename)
 		if !os.IsNotExist(err) {
 			if err != nil {
-				return resp, resp.close(err)
+				resp.close(err)
+				return
 			}
 
 			if !fi.IsDir() {
@@ -163,7 +162,8 @@ func (c *Client) do(req *Request) (*Response, error) {
 				resp.DidResume = true
 				resp.Size = uint64(fi.Size())
 				resp.bytesResumed = uint64(fi.Size())
-				return resp, resp.close(nil)
+				resp.close(nil)
+				return
 			}
 		}
 	}
@@ -187,7 +187,8 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 		// get response headers
 		if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
-			return resp, resp.close(err)
+			resp.close(err)
+			return
 
 		} else if method != "HEAD" || (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
 			// ignore non 2XX results for HEAD requests.
@@ -207,12 +208,14 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 			// check content length matches expected length
 			if req.Size > 0 && hresp.ContentLength > 0 && req.Size != resp.Size {
-				return resp, resp.close(newGrabError(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
+				resp.close(newGrabError(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
+				return
 			}
 
 			// compute destination filename
 			if err := computeFilename(req, resp); err != nil {
-				return resp, resp.close(err)
+				resp.close(err)
+				return
 			}
 
 			// TODO: skip FileInfo check if completed in HEAD
@@ -227,16 +230,15 @@ func (c *Client) do(req *Request) (*Response, error) {
 					resp.bytesTransferred = uint64(fi.Size())
 
 					// validate checksum
-					if err := resp.checksum(); err != nil {
-						return resp, resp.close(err)
-					}
-
-					return resp, resp.close(nil)
+					err := resp.checksum()
+					resp.close(err)
+					return
 				}
 
 				// check if existing file is larger than expected
 				if uint64(fi.Size()) > resp.Size {
-					return resp, resp.close(newGrabError(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
+					resp.close(newGrabError(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
+					return
 				}
 
 				// check if resume is supported
@@ -258,7 +260,8 @@ func (c *Client) do(req *Request) (*Response, error) {
 				}
 			} else if !os.IsNotExist(err) {
 				// error in os.Stat
-				return resp, resp.close(err)
+				resp.close(err)
+				return
 			}
 		}
 	}
@@ -268,7 +271,8 @@ func (c *Client) do(req *Request) (*Response, error) {
 		dir := filepath.Dir(req.Filename)
 		if dir != "" {
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				return resp, resp.close(err)
+				resp.close(err)
+				return
 			}
 		}
 	}
@@ -276,19 +280,22 @@ func (c *Client) do(req *Request) (*Response, error) {
 	// open destination for writing
 	f, err := os.OpenFile(resp.Filename, wflags, 0644)
 	if err != nil {
-		return resp, resp.close(err)
+		resp.close(err)
+		return
 	}
 	resp.writer = f
 
 	// seek to the start of the file
 	if _, err := f.Seek(0, 0); err != nil {
-		return resp, resp.close(err)
+		resp.close(err)
+		return
 	}
 
 	// seek to end if resuming previous download
 	if doResume {
 		if _, err = f.Seek(0, os.SEEK_END); err != nil {
-			return resp, resp.close(err)
+			resp.close(err)
+			return
 		}
 
 		resp.DidResume = true
@@ -296,7 +303,7 @@ func (c *Client) do(req *Request) (*Response, error) {
 
 	// response context is ready to start transfer with resp.copy()
 	req.notify(resp)
-	return resp, nil
+	return
 }
 
 // computeFilename determines the destination filename for a request and sets
