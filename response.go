@@ -2,7 +2,6 @@ package grab
 
 import (
 	"bytes"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"os"
@@ -238,9 +237,7 @@ func (c *Response) checksum() error {
 			os.Remove(c.Filename)
 		}
 
-		return errorf(errChecksumMismatch, "checksum mismatch: %v, wanted %v",
-			hex.EncodeToString(sum),
-			hex.EncodeToString(c.Request.checksum))
+		return ErrBadChecksum
 	}
 
 	return nil

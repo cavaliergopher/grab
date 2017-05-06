@@ -99,7 +99,7 @@ func TestWithURLFilename(t *testing.T) {
 func TestWithNoFilename(t *testing.T) {
 	req, _ := NewRequest("", ts.URL)
 	resp := DefaultClient.Do(req)
-	if err := resp.Err(); err == nil || !IsNoFilename(err) {
+	if err := resp.Err(); err != ErrNoFilename {
 		t.Errorf("Expected no filename error, got: %v", err)
 		os.Remove(resp.Filename)
 	}
@@ -159,7 +159,7 @@ func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
 	req.SetChecksum(h, b, true)
 	resp := DefaultClient.Do(req)
 	if err := resp.Err(); err != nil {
-		if !IsChecksumMismatch(err) {
+		if err != ErrBadChecksum {
 			t.Errorf("Error in Client.Do(): %v", err)
 		} else if match {
 			t.Errorf("%v (%v bytes)", err, size)
@@ -228,7 +228,7 @@ func testSize(t *testing.T, url string, size uint64, match bool) {
 		}
 	} else {
 		// we want a ContentLengthMismatch error
-		if !IsContentLengthMismatch(err) {
+		if err != ErrBadLength {
 			t.Errorf("Expected content length mismatch. Got: %v", err)
 		}
 	}
@@ -323,7 +323,7 @@ func TestAutoResume(t *testing.T) {
 		// request smaller segment
 		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size/segs))
 		resp := DefaultClient.Do(req)
-		if err := resp.Err(); !IsContentLengthMismatch(err) {
+		if err := resp.Err(); err != ErrBadLength {
 			t.Errorf("Expected bad length error, got: %v", err)
 		}
 	}
@@ -365,7 +365,7 @@ func TestSkipExisting(t *testing.T) {
 	req.SetChecksum(sha256.New(), []byte{0x01, 0x02, 0x03, 0x04}, true)
 
 	resp = DefaultClient.Do(req)
-	if err := resp.Err(); err == nil || !IsChecksumMismatch(err) {
+	if err := resp.Err(); err != ErrBadChecksum {
 		t.Fatalf("Expected checksum error, got: %v", err)
 	}
 }

@@ -221,7 +221,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 
 			// check content length matches expected length
 			if req.Size > 0 && hresp.ContentLength > 0 && req.Size != resp.Size {
-				resp.close(errorf(errBadLength, "Bad content length in %s response: %d, expected %d", method, resp.Size, req.Size))
+				resp.close(ErrBadLength)
 				return
 			}
 
@@ -250,7 +250,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 
 				// check if existing file is larger than expected
 				if uint64(fi.Size()) > resp.Size {
-					resp.close(errorf(errBadLength, "Existing file (%d bytes) is larger than remote (%d bytes)", fi.Size(), resp.Size))
+					resp.close(ErrBadLength)
 					return
 				}
 
@@ -341,7 +341,7 @@ func computeFilename(req *Request, resp *Response) error {
 		// file doesn't exist
 		resp.Filename = req.Filename
 	} else {
-		// an error occurred
+		// unknown error occurred
 		return err
 	}
 
@@ -366,7 +366,7 @@ func computeFilename(req *Request, resp *Response) error {
 
 	// too bad if no filename found yet
 	if resp.Filename == "" {
-		return errorf(errNoFilename, "No filename could be determined")
+		return ErrNoFilename
 	}
 
 	return nil
