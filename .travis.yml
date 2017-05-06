@@ -1,9 +1,11 @@
 language: go
 
 go:
+  - 1.8.x
+  - 1.7.x
+  - 1.6.x
+  - 1.5.x
 #  - 1.4.3 # https://github.com/cavaliercoder/grab/issues/7
-  - 1.5.4
-  - 1.6.2
 
 install: make test-deps
 
