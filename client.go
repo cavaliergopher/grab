@@ -45,6 +45,7 @@ var DefaultClient = NewClient()
 
 // CancelRequest cancels an in-flight request by closing its connection.
 func (c *Client) CancelRequest(req *Request) {
+	// TODO: http.Transport.CancelRequest is deprecated
 	if t, ok := c.HTTPClient.Transport.(*http.Transport); ok {
 		t.CancelRequest(req.HTTPRequest)
 	}
@@ -184,6 +185,16 @@ func (c *Client) do(req *Request) (resp *Response) {
 	// request HEAD first
 	methods := []string{"HEAD", req.HTTPRequest.Method}
 	for _, method := range methods {
+		// check for context cancellation
+		select {
+		case <-req.Context().Done():
+			resp.close(req.Context().Err())
+			return
+
+		default:
+			// continue
+		}
+
 		// set request method
 		req.HTTPRequest.Method = method
 

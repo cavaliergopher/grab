@@ -1,6 +1,7 @@
 package grab
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -457,6 +458,10 @@ func TestCancelInProcess(t *testing.T) {
 	// wait until some data is transferred
 	for resp.BytesTransferred() < 1048576 {
 		time.Sleep(100 * time.Millisecond)
+		if resp.IsComplete() {
+			t.Errorf("Request finished early")
+			break
+		}
 	}
 
 	// cancel request
@@ -472,5 +477,36 @@ func TestCancelInProcess(t *testing.T) {
 	// delete downloaded file
 	if err := os.Remove(resp.Filename); err != nil {
 		t.Errorf("Error deleting test file: %v", err)
+	}
+}
+
+// TestCancelContext tests that a batch of requests can be cancel using a
+// context.Context cancellation. Requests are cancelled in multiple states:
+// in-progress and unstarted.
+func TestCancelContext(t *testing.T) {
+	tests := 256
+	client := NewClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reqs := make([]*Request, tests)
+	for i := 0; i < tests; i++ {
+		req, _ := NewRequest("", fmt.Sprintf("%s/.testCancelContext%d?size=134217728", ts.URL, i))
+		req = req.WithContext(ctx)
+		reqs[i] = req
+	}
+
+	respch := client.DoBatch(8, reqs...)
+	time.Sleep(time.Second * 1)
+	cancel()
+	for resp := range respch {
+		// err should be context.Cancelled or http.errRequestCanceled
+		if !strings.Contains(resp.Err().Error(), "canceled") {
+			t.Errorf("expected '%v', got '%v'", context.Canceled, resp.Err())
+		}
+
+		if resp.Filename != "" {
+			os.Remove(resp.Filename)
+		}
 	}
 }

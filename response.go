@@ -175,6 +175,15 @@ func (c *Response) copy() error {
 	// download and update progress
 	buffer := make([]byte, c.bufferSize)
 	for {
+		// check for cancellation
+		select {
+		case <-c.Request.Context().Done():
+			return c.close(c.Request.Context().Err())
+
+		default:
+			// continue
+		}
+
 		// read HTTP stream
 		n, err := c.HTTPResponse.Body.Read(buffer)
 		if err != nil && err != io.EOF {
@@ -182,6 +191,7 @@ func (c *Response) copy() error {
 		}
 
 		// write output stream
+		// TODO: fix buffer underwrites
 		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
 			return c.close(werr)
 		}

@@ -1,10 +1,10 @@
 package grab
 
 import (
+	"context"
 	"hash"
 	"net/http"
 	"net/url"
-	"sync"
 )
 
 // A Request represents an HTTP file transfer request to be sent by a Client.
@@ -54,9 +54,8 @@ type Request struct {
 	checksum      []byte
 	deleteOnError bool
 
-	// handlers are registered via Request.Notify
-	handlersMu sync.Mutex
-	handlers   []chan<- *Response
+	// Context for cancellation and timeout
+	ctx context.Context
 }
 
 // NewRequest returns a new file transfer Request suitable for use with
@@ -72,6 +71,37 @@ func NewRequest(dst, urlStr string) (*Request, error) {
 		HTTPRequest: req,
 		Filename:    dst,
 	}, nil
+}
+
+// Context returns the request's context. To change the context, use
+// WithContext.
+//
+// The returned context is always non-nil; it defaults to the
+// background context.
+//
+// The context controls cancelation.
+func (r *Request) Context() context.Context {
+	if r.ctx != nil {
+		return r.ctx
+	}
+
+	return context.Background()
+}
+
+// WithContext returns a shallow copy of r with its context changed
+// to ctx. The provided ctx must be non-nil.
+func (r *Request) WithContext(ctx context.Context) *Request {
+	if ctx == nil {
+		panic("nil context")
+	}
+
+	r2 := new(Request)
+	*r2 = *r
+	r2.ctx = ctx
+
+	// propagate to HTTPRequest
+	r2.HTTPRequest = r2.HTTPRequest.WithContext(ctx)
+	return r2
 }
 
 // URL returns the URL to be requested from the remote server.
