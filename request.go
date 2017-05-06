@@ -41,13 +41,13 @@ type Request struct {
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and an
 	// error returned.
-	Size uint64
+	Size int64
 
 	// BufferSize specifies the size in bytes of the buffer that is used for
 	// transferring the requested file. Larger buffers may result in faster
 	// throughput but will use more memory and result in less frequent updates
 	// to the transfer progress statistics. Default: 32KB.
-	BufferSize uint
+	BufferSize int
 
 	// hash, checksum and deleteOnError are set via SetChecksum.
 	hash          hash.Hash

@@ -12,8 +12,8 @@ func TestResponseProgress(t *testing.T) {
 	filename := ".testResponseProgress"
 	defer os.Remove(filename)
 
-	sleep := 300     // ms
-	size := 1024 * 8 // bytes
+	sleep := 300            // ms
+	size := int64(1024 * 8) // bytes
 
 	// request a slow transfer
 	req, _ := NewRequest(filename, fmt.Sprintf("%s?sleep=%v&size=%v", ts.URL, sleep, size))
@@ -36,7 +36,7 @@ func TestResponseProgress(t *testing.T) {
 		t.Errorf("Transfer is complete but progress is %v", p)
 	}
 
-	if s := resp.BytesTransferred(); s != uint64(size) {
+	if s := resp.BytesTransferred(); s != size {
 		t.Errorf("Expected to transfer %v bytes, got %v", size, s)
 	}
 }

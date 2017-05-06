@@ -31,7 +31,7 @@ type Response struct {
 	Filename string
 
 	// Size specifies the total expected size of the file transfer.
-	Size uint64
+	Size int64
 
 	// Start specifies the time at which the file transfer started.
 	Start time.Time
@@ -55,14 +55,14 @@ type Response struct {
 
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
-	bytesResumed uint64
+	bytesResumed int64
 
 	// bytesTransferred specifies the number of bytes which have already been
 	// transferred and should only be accessed atomically.
-	bytesTransferred uint64
+	bytesTransferred int64
 
 	// bufferSize specifies the site in bytes of the transfer buffer.
-	bufferSize uint
+	bufferSize int
 
 	// Error specifies any error that may have occurred during the file
 	// transfer.
@@ -99,8 +99,8 @@ func (c *Response) IsComplete() bool {
 
 // BytesTransferred returns the number of bytes which have already been
 // downloaded, including any data used to resume a previous download.
-func (c *Response) BytesTransferred() uint64 {
-	return atomic.LoadUint64(&c.bytesTransferred)
+func (c *Response) BytesTransferred() int64 {
+	return atomic.LoadInt64(&c.bytesTransferred)
 }
 
 // Progress returns the ratio of bytes which have already been downloaded over
@@ -194,7 +194,7 @@ func (c *Response) copy() error {
 		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
 			return c.close(werr)
 		}
-		atomic.AddUint64(&c.bytesTransferred, uint64(n))
+		atomic.AddInt64(&c.bytesTransferred, int64(n))
 
 		// break when finished
 		if err == io.EOF {

@@ -161,10 +161,11 @@ func (c *Client) do(req *Request) (resp *Response) {
 			}
 
 			if !fi.IsDir() {
+				// destination file exists - skip and return
 				resp.Filename = req.Filename
 				resp.DidResume = true
-				resp.Size = uint64(fi.Size())
-				resp.bytesResumed = uint64(fi.Size())
+				resp.Size = fi.Size()
+				resp.bytesResumed = fi.Size()
 				resp.close(nil)
 				return
 			}
@@ -216,7 +217,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 				// If this is a GET request which resumes a previous transfer,
 				// ContentLength will likely only be the size of the requested
 				// byte range, not the full file size.
-				resp.Size = resp.BytesTransferred() + uint64(hresp.ContentLength)
+				resp.Size = resp.BytesTransferred() + hresp.ContentLength
 			}
 
 			// check content length matches expected length
@@ -236,11 +237,11 @@ func (c *Client) do(req *Request) (resp *Response) {
 			// get fileinfo for destination
 			if fi, err := os.Stat(resp.Filename); err == nil {
 				// check if file transfer already complete
-				if resp.Size > 0 && uint64(fi.Size()) == resp.Size {
+				if resp.Size > 0 && fi.Size() == resp.Size {
 					// update response
 					resp.DidResume = true
-					resp.bytesResumed = uint64(fi.Size())
-					resp.bytesTransferred = uint64(fi.Size())
+					resp.bytesResumed = fi.Size()
+					resp.bytesTransferred = fi.Size()
 
 					// validate checksum
 					err := resp.checksum()
@@ -249,7 +250,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 				}
 
 				// check if existing file is larger than expected
-				if uint64(fi.Size()) > resp.Size {
+				if fi.Size() > resp.Size {
 					resp.close(ErrBadLength)
 					return
 				}
@@ -263,11 +264,11 @@ func (c *Client) do(req *Request) (resp *Response) {
 					wflags = os.O_APPEND | os.O_WRONLY
 
 					// update progress
-					resp.bytesTransferred = uint64(fi.Size())
+					resp.bytesTransferred = fi.Size()
 
 					// set byte range in next request
 					if fi.Size() > 0 {
-						resp.bytesResumed = uint64(fi.Size())
+						resp.bytesResumed = fi.Size()
 						req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
 					}
 				}

@@ -216,7 +216,7 @@ func TestChecksums(t *testing.T) {
 
 // testSize executes a request and asserts that the file size for the downloaded
 // file does or does not match the expected size.
-func testSize(t *testing.T, url string, size uint64, match bool) {
+func testSize(t *testing.T, url string, size int64, match bool) {
 	req, _ := NewRequest(".testSize-mismatch-head", url)
 	req.Size = size
 
@@ -245,7 +245,7 @@ func testSize(t *testing.T, url string, size uint64, match bool) {
 
 // TestSize exeuctes a number of size tests via testSize.
 func TestSize(t *testing.T) {
-	size := uint64(32768)
+	size := int64(32768)
 
 	// bad size should error in HEAD request
 	testSize(t, ts.URL+fmt.Sprintf("?size=%d", size-1), size, false)
