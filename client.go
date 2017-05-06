@@ -303,8 +303,6 @@ func (c *Client) do(req *Request) (resp *Response) {
 		resp.DidResume = true
 	}
 
-	// response context is ready to start transfer with resp.copy()
-	req.notify(resp)
 	return
 }
 

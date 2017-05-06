@@ -101,36 +101,3 @@ func (r *Request) SetChecksum(h hash.Hash, sum []byte, deleteOnError bool) {
 	r.checksum = sum
 	r.deleteOnError = deleteOnError
 }
-
-// Notify causes a Client to send a Response down the given channel, as soon as
-// as a response header is received from the remote server (before file transfer
-// begins).
-//
-// Notifications will be discarded if the given channel has insufficient buffer
-// space for slow receivers.
-func (r *Request) Notify(c chan<- *Response) {
-	r.handlersMu.Lock()
-	defer r.handlersMu.Unlock()
-	if r.handlers == nil {
-		r.handlers = make([]chan<- *Response, 0)
-	}
-	r.handlers = append(r.handlers, c)
-}
-
-// notify sends the given Response to all channels registered with Notify.
-func (r *Request) notify(resp *Response) {
-	r.handlersMu.Lock()
-	defer r.handlersMu.Unlock()
-	if r.handlers != nil {
-		for _, h := range r.handlers {
-			// We don't want to block here. It is the caller's responsibility to make
-			// sure the channel has enough buffer space.
-			select {
-			case h <- resp:
-				// ok
-			default:
-				// discarding notification
-			}
-		}
-	}
-}
