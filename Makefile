@@ -1,13 +1,13 @@
 GO = go
 GOGET = $(GO) get -u
 
-all: test lint
+all: check lint
 
 check:
-	$(GO) test -v -cover
+	$(GO) test -v -cover ./...
 
 clean:
-	$(GO) clean -x
+	$(GO) clean -x ./...
 	rm -vf ./.test*
 
 test-deps:
@@ -26,4 +26,4 @@ lint-deps:
 	$(GOGET) github.com/fzipp/gocyclo
 	$(GOGET) github.com/client9/misspell/cmd/misspell
 
-.PHONY: all deps test test-deps lint lint-deps
+.PHONY: all deps check test-deps lint lint-deps

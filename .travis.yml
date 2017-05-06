@@ -9,7 +9,7 @@ go:
 
 install: make test-deps
 
-script: make test
+script: make check
 
 env: 
   - GOARCH=amd64
