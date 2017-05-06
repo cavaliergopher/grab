@@ -21,6 +21,14 @@ http://cavaliercoder.com/blog/downloading-large-files-in-go.html
 
 Requires Go v1.7+
 
+## Older versions
+
+If you are using an older version of Go, or require previously broken versions
+of the Grab API, you can import older version of this package, thanks to
+gpkg.in. Please see all GitHub tags for available versions.
+
+		$ go get gopkg.in/cavaliercoder/grab.v1
+
 
 ## Example
 
