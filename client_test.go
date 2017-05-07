@@ -428,8 +428,7 @@ func TestCancelContext(t *testing.T) {
 	reqs := make([]*Request, tests)
 	for i := 0; i < tests; i++ {
 		req, _ := NewRequest("", fmt.Sprintf("%s/.testCancelContext%d?size=134217728", ts.URL, i))
-		req = req.WithContext(ctx)
-		reqs[i] = req
+		reqs[i] = req.WithContext(ctx)
 	}
 
 	respch := client.DoBatch(8, reqs...)
@@ -448,3 +447,25 @@ func TestCancelContext(t *testing.T) {
 }
 
 // TODO: UserAgent string tests
+
+func Example_cancellation() {
+	// create context with a 100ms timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// create new download request with context
+	req, err := NewRequest("./", "http://www.golang-book.com/public/pdf/gobook.pdf")
+	if err != nil {
+		panic(err)
+	}
+	req = req.WithContext(ctx)
+
+	// send download request
+	resp := DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
+		fmt.Printf("error: request cancelled\n")
+	}
+
+	// Output:
+	// error: request cancelled
+}
