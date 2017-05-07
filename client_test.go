@@ -44,7 +44,7 @@ func testComplete(t *testing.T, resp *Response) {
 		}
 
 		if p := resp.Progress(); p != 1.00 {
-			t.Errorf("Response.Progress returned %v, expected 1.00", p)
+			t.Errorf("Response.Progress returned %v (%v/%v bytes), expected 1", p, resp.BytesTransferred(), resp.Size)
 		}
 	}
 }
@@ -289,13 +289,13 @@ func TestAutoResume(t *testing.T) {
 		if err := resp.Err(); err != nil {
 			t.Errorf("Error segment %d (%d bytes): %v", i+1, segsize, err)
 			break
-		} else {
-			if i > 0 && !resp.DidResume {
-				t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
-			}
-
-			testComplete(t, resp)
 		}
+
+		if i > 0 && !resp.DidResume {
+			t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
+		}
+
+		testComplete(t, resp)
 
 		// only check birth time on OS's that support it
 		if times.HasBirthTime {
@@ -416,70 +416,6 @@ func TestBatch(t *testing.T) {
 	}
 }
 
-// TestCancel validates that a request can be successfully cancelled before a
-// file transfer starts.
-func TestCancel(t *testing.T) {
-	client := NewClient()
-
-	// slow request
-	req, _ := NewRequest("", ts.URL+"/.testCancel?sleep=2000")
-	ch := make(chan *Response, 1)
-	go func() {
-		resp := client.Do(req)
-		ch <- resp
-		close(ch)
-	}()
-
-	// sleep and cancel before request is served
-	time.Sleep(500 * time.Millisecond)
-	client.CancelRequest(req)
-
-	// wait for response
-	resp := <-ch
-	testComplete(t, resp)
-
-	// validate error
-	if resp.Err() == nil ||
-		!(strings.Contains(resp.Err().Error(), "request canceled") || strings.Contains(resp.Err().Error(), "use of closed network connection")) {
-		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Err())
-	}
-}
-
-// TestCancelInProcess validates that a request can be successfully cancelled
-// after a file transfer has started.
-func TestCancelInProcess(t *testing.T) {
-	client := NewClient()
-
-	// large file request
-	req, _ := NewRequest("", ts.URL+"/.testCancelInProcess?size=134217728")
-
-	resp := client.Do(req)
-
-	// wait until some data is transferred
-	for resp.BytesTransferred() < 1048576 {
-		time.Sleep(100 * time.Millisecond)
-		if resp.IsComplete() {
-			t.Errorf("Request finished early")
-			break
-		}
-	}
-
-	// cancel request
-	client.CancelRequest(req)
-	testComplete(t, resp)
-
-	// validate error
-	if resp.Err() == nil ||
-		!(strings.Contains(resp.Err().Error(), "request canceled") || strings.Contains(resp.Err().Error(), "use of closed network connection")) {
-		t.Errorf("Expected 'request cancelled' error; got: '%v'", resp.Err())
-	}
-
-	// delete downloaded file
-	if err := os.Remove(resp.Filename); err != nil {
-		t.Errorf("Error deleting test file: %v", err)
-	}
-}
-
 // TestCancelContext tests that a batch of requests can be cancel using a
 // context.Context cancellation. Requests are cancelled in multiple states:
 // in-progress and unstarted.
@@ -497,7 +433,7 @@ func TestCancelContext(t *testing.T) {
 	}
 
 	respch := client.DoBatch(8, reqs...)
-	time.Sleep(time.Second * 1)
+	time.Sleep(time.Millisecond * 500)
 	cancel()
 	for resp := range respch {
 		// err should be context.Cancelled or http.errRequestCanceled

@@ -1,13 +1,11 @@
 package grab
 
 import (
+	"context"
 	"fmt"
-	"mime"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -42,14 +40,6 @@ func NewClient() *Client {
 // DefaultClient is the default client and is used by all Get convenience
 // functions.
 var DefaultClient = NewClient()
-
-// CancelRequest cancels an in-flight request by closing its connection.
-func (c *Client) CancelRequest(req *Request) {
-	// TODO: http.Transport.CancelRequest is deprecated
-	if t, ok := c.HTTPClient.Transport.(*http.Transport); ok {
-		t.CancelRequest(req.HTTPRequest)
-	}
-}
 
 // Do sends a file transfer request and returns a file transfer response
 // context, following policy (e.g. redirects, cookies, auth) as configured on
@@ -140,234 +130,198 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 // request to the remote server. It does not transfer any body content as this
 // may be preferable in a separate goroutine.
 func (c *Client) do(req *Request) (resp *Response) {
+	// cancel will be called in resp.close
+	ctx, cancel := context.WithCancel(req.Context())
+
 	// create a response
 	resp = &Response{
 		Request:    req,
 		Start:      time.Now(),
 		Done:       make(chan struct{}, 0),
+		ctx:        ctx,
+		cancel:     cancel,
 		bufferSize: req.BufferSize,
+		writeFlags: os.O_CREATE | os.O_WRONLY,
 	}
 
-	// default to current working directory
-	if req.Filename == "" {
-		req.Filename = "."
-	} else if req.SkipExisting {
-		// skip existing files
-		fi, err := os.Stat(req.Filename)
-		if !os.IsNotExist(err) {
-			if err != nil {
-				resp.close(err)
-				return
-			}
-
-			if !fi.IsDir() {
-				// destination file exists - skip and return
-				resp.Filename = req.Filename
-				resp.DidResume = true
-				resp.Size = fi.Size()
-				resp.bytesResumed = fi.Size()
-				resp.close(nil)
-				return
-			}
-		}
+	// check for existing file
+	if err := c.getFileInfo(req, resp); err != nil {
+		resp.close(err)
+		return
 	}
 
-	// default write flags
-	wflags := os.O_CREATE | os.O_WRONLY
-
-	// flag to resume previous download
-	doResume := false
-
-	// set user agent string
-	if c.UserAgent != "" && req.HTTPRequest.Header.Get("User-Agent") == "" {
-		req.HTTPRequest.Header.Set("User-Agent", c.UserAgent)
+	if ok, err := c.checkComplete(req, resp); ok || err != nil {
+		resp.close(err)
+		return
 	}
 
-	// request HEAD first
-	methods := []string{"HEAD", req.HTTPRequest.Method}
-	for _, method := range methods {
-		// check for context cancellation
-		select {
-		case <-req.Context().Done():
-			resp.close(req.Context().Err())
-			return
-
-		default:
-			// continue
-		}
-
-		// set request method
-		req.HTTPRequest.Method = method
-
-		// get response headers
-		if hresp, err := c.HTTPClient.Do(req.HTTPRequest); err != nil {
+	// try resume
+	if resp.fi != nil || resp.Filename == "" {
+		// send HEAD request
+		hreq := new(http.Request)
+		*hreq = *req.HTTPRequest
+		hreq.Method = "HEAD"
+		hresp, err := c.HTTPClient.Do(hreq)
+		if err != nil {
 			resp.close(err)
 			return
+		}
+		resp.HTTPResponse = hresp
 
-		} else if method != "HEAD" || (hresp.StatusCode >= 200 && hresp.StatusCode < 300) {
-			// ignore non 2XX results for HEAD requests.
-			// dont make assumptions about non 2XX statuses for GET requests -
-			// let the caller make such decisions.
+		if err := c.processResponse(req, resp); err != nil {
+			resp.close(err)
+			return
+		}
 
-			// allow caller to see response if error occurs before final transfer
-			resp.HTTPResponse = hresp
+		if ok, err := c.checkComplete(req, resp); ok || err != nil {
+			resp.close(err)
+			return
+		}
 
-			// set response size
-			if hresp.ContentLength > 0 {
-				// If this is a GET request which resumes a previous transfer,
-				// ContentLength will likely only be the size of the requested
-				// byte range, not the full file size.
-				resp.Size = resp.BytesTransferred() + hresp.ContentLength
-			}
-
-			// check content length matches expected length
-			if req.Size > 0 && hresp.ContentLength > 0 && req.Size != resp.Size {
-				resp.close(ErrBadLength)
-				return
-			}
-
-			// compute destination filename
-			if err := computeFilename(req, resp); err != nil {
-				resp.close(err)
-				return
-			}
-
-			// TODO: skip FileInfo check if completed in HEAD
-
-			// get fileinfo for destination
-			if fi, err := os.Stat(resp.Filename); err == nil {
-				// check if file transfer already complete
-				if resp.Size > 0 && fi.Size() == resp.Size {
-					// update response
-					resp.DidResume = true
-					resp.bytesResumed = fi.Size()
-					resp.bytesTransferred = fi.Size()
-
-					// validate checksum
-					err := resp.checksum()
-					resp.close(err)
-					return
-				}
-
-				// check if existing file is larger than expected
-				if fi.Size() > resp.Size {
-					resp.close(ErrBadLength)
-					return
-				}
-
-				// check if resume is supported
-				if method == "HEAD" && hresp.Header.Get("Accept-Ranges") == "bytes" {
-					// resume previous download
-					doResume = true
-
-					// allow writer to append to existing file
-					wflags = os.O_APPEND | os.O_WRONLY
-
-					// update progress
-					resp.bytesTransferred = fi.Size()
-
-					// set byte range in next request
-					if fi.Size() > 0 {
-						resp.bytesResumed = fi.Size()
-						req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", fi.Size()))
-					}
-				}
-			} else if !os.IsNotExist(err) {
-				// error in os.Stat
-				resp.close(err)
-				return
-			}
+		if resp.CanResume && resp.fi != nil {
+			req.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", resp.fi.Size()))
+			resp.DidResume = true
+			resp.bytesResumed = resp.fi.Size()
+			resp.bytesTransferred = resp.fi.Size()
+			resp.writeFlags = os.O_APPEND | os.O_WRONLY
 		}
 	}
 
-	// create destination directory
-	if req.CreateMissing {
-		dir := filepath.Dir(req.Filename)
-		if dir != "" {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				resp.close(err)
-				return
-			}
-		}
-	}
-
-	// open destination for writing
-	f, err := os.OpenFile(resp.Filename, wflags, 0644)
+	// send transfer request
+	hresp, err := c.HTTPClient.Do(req.HTTPRequest)
 	if err != nil {
 		resp.close(err)
 		return
 	}
-	resp.writer = f
 
-	// seek to the start of the file
-	if _, err := f.Seek(0, 0); err != nil {
+	resp.HTTPResponse = hresp
+	if err := c.processResponse(req, resp); err != nil {
 		resp.close(err)
 		return
 	}
 
-	// seek to end if resuming previous download
-	if doResume {
-		if _, err = f.Seek(0, os.SEEK_END); err != nil {
+	if !resp.DidResume {
+		if ok, err := c.checkComplete(req, resp); ok || err != nil {
 			resp.close(err)
 			return
 		}
-
-		resp.DidResume = true
 	}
 
-	return
+	// open destination for writing
+	if err := resp.openWriter(); err != nil {
+		resp.close(err)
+		return
+	}
+
+	return resp
 }
 
-// computeFilename determines the destination filename for a request and sets
-// resp.Filename. If no name is determined, an error is returned which can be
-// identified with IsNoFilename.
-func computeFilename(req *Request, resp *Response) error {
-	// return if destination path already set
-	if resp.Filename != "" {
-		return nil
+func (c *Client) getFileInfo(req *Request, resp *Response) error {
+	if resp.Filename == "" {
+		resp.Filename = req.Filename
 	}
 
-	// see if requested destination is a directory
-	dir := ""
-	if fi, err := os.Stat(req.Filename); err == nil {
-		// file exists - is it a directory?
-		if fi.IsDir() {
-			// destination is a directory - compute a file name later
-			dir = req.Filename
-		} else {
-			// destination is an existing file
-			resp.Filename = req.Filename
+	fi, err := os.Stat(resp.Filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
-	} else if os.IsNotExist(err) {
-		// file doesn't exist
-		resp.Filename = req.Filename
-	} else {
-		// unknown error occurred
+
 		return err
 	}
 
-	// get filename from Content-Disposition header
-	if resp.Filename == "" {
-		if cd := resp.HTTPResponse.Header.Get("Content-Disposition"); cd != "" {
-			if _, params, err := mime.ParseMediaType(cd); err == nil {
-				if filename, ok := params["filename"]; ok {
-					resp.Filename = path.Join(dir, filename)
-				}
-			}
+	if fi.IsDir() {
+		resp.Filename = ""
+		return nil
+	}
+
+	resp.fi = fi
+
+	return nil
+}
+
+// checkComplete returns true if the requested download is already completed,
+// before starting transfer.
+//
+// The size of an existing file is checked, first against Request.Size, if
+// given and then against the Content-Length returned by the remote server.
+//
+// If the file is complete, and a checksum has been requested, it will also be
+// checked.
+//
+// TODO: check timestamps and/or E-Tags
+func (c *Client) checkComplete(req *Request, resp *Response) (bool, error) {
+	if resp.fi == nil {
+		return false, nil
+	}
+
+	// skip existing files
+	if req.SkipExisting {
+		return true, ErrFileExists
+	}
+
+	size := req.Size
+	if size == 0 && resp.HTTPResponse != nil {
+		// This assumes that the HTTPResponse is for a HEAD or non-ranged GET
+		// request. Ranged requests will not return the full file size; just the
+		// size of the requested range.
+		size = resp.HTTPResponse.ContentLength
+	}
+
+	if size == 0 {
+		return false, nil
+	}
+
+	if size < resp.fi.Size() {
+		return false, ErrBadLength
+	}
+
+	if size == resp.fi.Size() {
+		resp.DidResume = true
+		resp.bytesResumed = resp.fi.Size()
+		resp.bytesTransferred = resp.fi.Size()
+
+		if err := resp.checksum(); err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (c *Client) processResponse(req *Request, resp *Response) error {
+	if resp.HTTPResponse.ContentLength > 0 {
+		resp.Size = resp.bytesTransferred + resp.HTTPResponse.ContentLength
+
+		// check expected file size
+		if req.Size > 0 && req.Size != resp.Size {
+			return ErrBadLength
+		}
+
+		// check existing file size
+		if resp.fi != nil && resp.fi.Size() > resp.Size {
+			return ErrBadLength
 		}
 	}
 
-	// get filename from url if still needed
-	if resp.Filename == "" {
-		if req.HTTPRequest.URL.Path != "" && !strings.HasSuffix(req.HTTPRequest.URL.Path, "/") {
-			// update filepath with filename from URL
-			resp.Filename = filepath.Join(dir, path.Base(req.HTTPRequest.URL.Path))
-		}
+	// check can resume
+	if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
+		resp.CanResume = true
 	}
 
-	// too bad if no filename found yet
+	// check filename
 	if resp.Filename == "" {
-		return ErrNoFilename
+		filename, err := guessFilename(resp.HTTPResponse)
+		if err != nil {
+			return err
+		}
+		resp.Filename = filepath.Join(req.Filename, filename)
+
+		if err := c.getFileInfo(req, resp); err != nil {
+			return err
+		}
 	}
 
 	return nil

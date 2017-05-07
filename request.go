@@ -33,9 +33,8 @@ type Request struct {
 	// should be automatically created.
 	CreateMissing bool
 
-	// SkipExisting specifies that any files at the given Filename path, that
-	// already exist will be naively skipped; without checking file size or
-	// checksum.
+	// SkipExisting specifies that any existing files at destination Filename path
+	// will be naively skipped and ErrFileExists returned.
 	SkipExisting bool
 
 	// Size specifies the expected size of the file transfer if known. If the
@@ -61,6 +60,10 @@ type Request struct {
 // NewRequest returns a new file transfer Request suitable for use with
 // Client.Do.
 func NewRequest(dst, urlStr string) (*Request, error) {
+	if dst == "" {
+		dst = "."
+	}
+
 	// create http request
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -107,6 +110,16 @@ func (r *Request) WithContext(ctx context.Context) *Request {
 // URL returns the URL to be requested from the remote server.
 func (r *Request) URL() *url.URL {
 	return r.HTTPRequest.URL
+}
+
+// isCancelled returns true if the Request Context has been cancelled.
+func (r *Request) isCancelled() bool {
+	select {
+	case <-r.Context().Done():
+		return true
+	default:
+		return false
+	}
 }
 
 // SetChecksum sets the desired checksum and hashing algorithm for a file

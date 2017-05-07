@@ -2,6 +2,7 @@ package grab
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -41,6 +42,10 @@ type Response struct {
 	// This should not be read until IsComplete returns true.
 	End time.Time
 
+	// CanResume specifies that the remote server advertised that it can resume
+	// previous downloads as the 'Accept-Ranges: bytes' is set.
+	CanResume bool
+
 	// DidResume specifies that the file transfer resumed a previously
 	// incomplete transfer.
 	DidResume bool
@@ -49,9 +54,18 @@ type Response struct {
 	// errors.
 	Done chan struct{}
 
+	// ctx is a Context that controls cancellation of an inprogress transfer
+	ctx context.Context
+
+	// cancel is a cancel func that can be used to cancel the context of this
+	// Response.
+	cancel context.CancelFunc
+
 	// writer is the file handle used to write the downloaded file to local
 	// storage
 	writer io.WriteCloser
+
+	writeFlags int
 
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
@@ -69,6 +83,18 @@ type Response struct {
 	//
 	// This should not be read until IsComplete returns true.
 	err error
+
+	// fi is the FileInfo for the destination file if it already existed before
+	// transfer started.
+	fi os.FileInfo
+}
+
+// Cancel cancels the file transfer by cancelling the underlying Context for
+// this Response. Cancel blocks until the transfer is closed and returns any
+// error, typically, context.Canceled.
+func (c *Response) Cancel() error {
+	c.cancel()
+	return c.Err()
 }
 
 // Wait blocks until the underlying file transfer is completed. If the transfer
@@ -161,6 +187,36 @@ func (c *Response) AverageBytesPerSecond() float64 {
 	return float64(c.BytesTransferred()-c.bytesResumed) / c.Duration().Seconds()
 }
 
+// openWriter opens the destination file for writing and seeks to the location
+// from whence the file transfer will append.
+func (c *Response) openWriter() error {
+	if c.Filename == "" {
+		panic("filename not set")
+	}
+
+	if c.writeFlags == 0 {
+		panic("writeFlags not set")
+	}
+
+	f, err := os.OpenFile(c.Filename, c.writeFlags, 0644)
+	if err != nil {
+		return err
+	}
+	c.writer = f
+
+	// seek to start or end
+	whence := os.SEEK_SET
+	if c.bytesResumed > 0 {
+		whence = os.SEEK_END
+	}
+
+	if _, err := f.Seek(0, whence); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // copy transfers content for a HTTP connection established via Client.do()
 func (c *Response) copy() error {
 	if c.IsComplete() {
@@ -176,8 +232,8 @@ func (c *Response) copy() error {
 	for {
 		// check for cancellation
 		select {
-		case <-c.Request.Context().Done():
-			return c.close(c.Request.Context().Err())
+		case <-c.ctx.Done():
+			return c.close(c.ctx.Err())
 
 		default:
 			// continue
@@ -246,7 +302,7 @@ func (c *Response) checksum() error {
 // close finalizes the Response
 func (c *Response) close(err error) error {
 	if c.IsComplete() {
-		panic("Response already closed")
+		panic("response already closed")
 	}
 
 	if c.writer != nil {
@@ -261,6 +317,10 @@ func (c *Response) close(err error) error {
 	c.err = err
 	c.End = time.Now()
 	close(c.Done)
+
+	if c.cancel != nil {
+		c.cancel()
+	}
 
 	return err
 }
