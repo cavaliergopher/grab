@@ -3,9 +3,11 @@ package grab
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 )
@@ -187,8 +189,128 @@ func (c *Response) AverageBytesPerSecond() float64 {
 	return float64(c.BytesTransferred()-c.bytesResumed) / c.Duration().Seconds()
 }
 
+// setFileInfo sets Response.fi for the given Response.Filename. nil is set if
+// the file does not exist or is a directory.
+func (c *Response) setFileInfo() error {
+	fi, err := os.Stat(c.Filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return err
+	}
+
+	if fi.IsDir() {
+		c.Filename = ""
+		return nil
+	}
+
+	c.fi = fi
+
+	return nil
+}
+
+// readResponse reads a http.Response and updates Response.HTTPResponse,
+// Response.Size, Response.Filename and Response.CanResume. An error is returned
+// if any information returned from the remote server mismatches what is
+// expected for the associated Request.
+func (c *Response) readResponse(resp *http.Response) error {
+	c.HTTPResponse = resp
+	c.Size = c.bytesTransferred + resp.ContentLength
+
+	if resp.Header.Get("Accept-Ranges") == "bytes" {
+		c.CanResume = true
+	}
+
+	// check expected size
+	if resp.ContentLength > 0 {
+		if c.Request.Size > 0 && c.Request.Size != c.Size {
+			return ErrBadLength
+		}
+		if c.fi != nil && c.fi.Size() > c.Size {
+			return ErrBadLength
+		}
+	}
+
+	// check filename
+	if c.Filename == "" {
+		filename, err := guessFilename(resp)
+		if err != nil {
+			return err
+		}
+
+		// Request.Filename will be empty or a directory
+		c.Filename = filepath.Join(c.Request.Filename, filename)
+		if err := c.setFileInfo(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkExisting returns true if a file already exists for this request and is
+// 100% completed. The size of the file is checked against Request.Size if set,
+// or the Content-Length returned by the remote server.
+//
+// If a checksum has been requested, it will be executed on the existing file
+// and an error returned if it fails validation.
+//
+// TODO: check timestamps and/or E-Tags
+func (c *Response) checkExisting() (bool, error) {
+	if c.fi == nil {
+		return false, nil
+	}
+
+	if c.Request.SkipExisting {
+		return true, ErrFileExists
+	}
+
+	// determine expected file size
+	size := c.Request.Size
+	if size == 0 && c.HTTPResponse != nil {
+		// This assumes that the HTTPResponse is for a HEAD or non-ranged GET
+		// request. Ranged requests will not return the full file size; just the
+		// size of the requested range.
+		size = c.HTTPResponse.ContentLength
+	}
+
+	if size == 0 {
+		return false, nil
+	}
+
+	if size < c.fi.Size() {
+		return false, ErrBadLength
+	}
+
+	if size == c.fi.Size() {
+		c.DidResume = true
+		c.bytesResumed = c.fi.Size()
+		c.bytesTransferred = c.fi.Size()
+		if err := c.checksum(); err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}
+
+	// prepare for resuming a partial completed download
+	if c.CanResume {
+		c.Request.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", c.fi.Size()))
+		c.DidResume = true
+		c.bytesResumed = c.fi.Size()
+		c.bytesTransferred = c.fi.Size()
+		c.writeFlags = os.O_APPEND | os.O_WRONLY
+	}
+
+	return false, nil
+}
+
 // openWriter opens the destination file for writing and seeks to the location
-// from whence the file transfer will append.
+// from whence the file transfer will resume.
+//
+// Requires that Response.Filename and Response.writeFlags already be set.
 func (c *Response) openWriter() error {
 	if c.Filename == "" {
 		panic("filename not set")
@@ -227,7 +349,6 @@ func (c *Response) copy() error {
 		c.bufferSize = 32 * 1024
 	}
 
-	// download and update progress
 	buffer := make([]byte, c.bufferSize)
 	for {
 		// check for cancellation
@@ -239,20 +360,17 @@ func (c *Response) copy() error {
 			// continue
 		}
 
-		// read HTTP stream
 		n, err := c.HTTPResponse.Body.Read(buffer)
 		if err != nil && err != io.EOF {
 			return c.close(err)
 		}
 
-		// write output stream
 		// TODO: fix buffer underwrites
 		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
 			return c.close(werr)
 		}
 		atomic.AddInt64(&c.bytesTransferred, int64(n))
 
-		// break when finished
 		if err == io.EOF {
 			c.HTTPResponse.Body.Close()
 			c.writer.Close()
@@ -260,7 +378,6 @@ func (c *Response) copy() error {
 		}
 	}
 
-	// validate checksum
 	if err := c.checksum(); err != nil {
 		return c.close(err)
 	}
@@ -318,6 +435,7 @@ func (c *Response) close(err error) error {
 	c.End = time.Now()
 	close(c.Done)
 
+	// may cause re-entry?
 	if c.cancel != nil {
 		c.cancel()
 	}

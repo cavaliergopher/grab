@@ -446,3 +446,5 @@ func TestCancelContext(t *testing.T) {
 		}
 	}
 }
+
+// TODO: UserAgent string tests

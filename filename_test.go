@@ -1,7 +1,9 @@
 package grab
 
-import "testing"
-import "net/http"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestURLFilenames(t *testing.T) {
 	expect := "filename"
