@@ -1,8 +1,11 @@
 package grab
 
-import "context"
-import "io"
+import (
+	"context"
+	"io"
+)
 
+// isCanceled returns a non-nil error if the given context has been canceled.
 func isCanceled(ctx context.Context) error {
 	select {
 	case <-ctx.Done():

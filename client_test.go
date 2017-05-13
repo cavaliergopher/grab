@@ -17,8 +17,7 @@ import (
 	"github.com/djherbis/times"
 )
 
-// testComplete validates that a completed transfer response has all the desired
-// fields filled.
+// testComplete validates that a completed Response has all the desired fields.
 func testComplete(t *testing.T, resp *Response) {
 	<-resp.Done
 	if !resp.IsComplete() {
@@ -43,178 +42,130 @@ func testComplete(t *testing.T, resp *Response) {
 			t.Errorf("Response.Filename is empty")
 		}
 
+		if resp.Size == 0 {
+			t.Error("Response.Size is zero")
+		}
+
 		if p := resp.Progress(); p != 1.00 {
 			t.Errorf("Response.Progress returned %v (%v/%v bytes), expected 1", p, resp.BytesTransferred(), resp.Size)
 		}
 	}
 }
 
-// testFilename executes a request and asserts that the downloaded filename
-// matches the given filename.
-func testFilename(t *testing.T, req *Request, filename string) {
-	// fetch
-	resp := DefaultClient.Do(req)
-	if err := resp.Err(); err != nil {
-		t.Errorf("Error in Client.Do(): %v", err)
+// TestFilenameResolutions tests that the destination filename for Requests can
+// be determined correctly, using an explicitly requested path,
+// Content-Disposition headers or a URL path.
+func TestFilenameResolution(t *testing.T) {
+	testCases := []struct {
+		Name     string
+		Filename string
+		URL      string
+		Expect   string
+	}{
+		{"Using Request.Filename", ".testWithFilename", "/url-filename?filename=header-filename", ".testWithFilename"},
+		{"Using Content-Disposition Header", "", "/url-filename?filename=.testWithHeaderFilename", ".testWithHeaderFilename"},
+		{"Using Content-Disposition Header with target directory", ".test", "/url-filename?filename=header-filename", ".test/header-filename"},
+		{"Using URL Path", "", "/.testWithURLFilename?params-filename", ".testWithURLFilename"},
+		{"Using URL Path with target directory", ".test", "/url-filename?garbage", ".test/url-filename"},
+		{"Failure", "", "", ""},
 	}
 
-	// delete downloaded file
-	if err := os.Remove(resp.Filename); err != nil {
-		t.Errorf("Error deleting test file: %v", err)
-	}
-
-	// compare filename
-	if resp.Filename != filename {
-		t.Errorf("Filename mismatch. Expected '%s', got '%s'.", filename, resp.Filename)
-	}
-
-	testComplete(t, resp)
-}
-
-// TestWithFilename asserts that the downloaded filename matches a filename
-// specified explicitly via Request.Filename, and not a name matching the
-// request URL or Content-Disposition header.
-func TestWithFilename(t *testing.T) {
-	req, _ := NewRequest(".testWithFilename", ts.URL+"/url-filename?filename=header-filename")
-	testFilename(t, req, ".testWithFilename")
-}
-
-// TestWithHeaderFilename asserts that the downloaded filename matches a
-// filename specified explicitly via the Content-Disposition header and not a
-// name matching the request URL.
-func TestWithHeaderFilename(t *testing.T) {
-	req, _ := NewRequest("", ts.URL+"/url-filename?filename=.testWithHeaderFilename")
-	testFilename(t, req, ".testWithHeaderFilename")
-}
-
-// TestWithURLFilename asserts that the downloaded filename matches the
-// requested URL.
-func TestWithURLFilename(t *testing.T) {
-	req, _ := NewRequest("", ts.URL+"/.testWithURLFilename?params-filename")
-	testFilename(t, req, ".testWithURLFilename")
-}
-
-// TestWithNoFilename ensures a No Filename error is returned when none can be
-// determined.
-func TestWithNoFilename(t *testing.T) {
-	req, _ := NewRequest("", ts.URL)
-	resp := DefaultClient.Do(req)
-	if err := resp.Err(); err != ErrNoFilename {
-		t.Errorf("Expected no filename error, got: %v", err)
-		os.Remove(resp.Filename)
-	}
-}
-
-// TestWithExistingDir asserts that the resolved filename from the response
-// is appended to the existing dir specified explicitly via Request.Filename
-func TestWithExistingDir(t *testing.T) {
 	err := os.Mkdir(".test", 0777)
 	if err != nil {
-		t.Error(err)
+		panic(err)
 	}
+	defer os.Remove(".test")
 
-	// test naming via Content-Disposition headers
-	req, _ := NewRequest("", ts.URL+"/url-filename?filename=header-filename")
-	req.Filename = ".test"
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			req, _ := NewRequest(tc.Filename, ts.URL+tc.URL)
+			resp := DefaultClient.Do(req)
+			defer os.Remove(resp.Filename)
+			if err := resp.Err(); err != nil {
+				if tc.Expect != "" || err != ErrNoFilename {
+					panic(err)
+				}
+			} else {
+				if tc.Expect == "" {
+					t.Errorf("expected: %v, got: %v", ErrNoFilename, err)
+				}
+			}
 
-	testFilename(t, req, ".test/header-filename")
+			if resp.Filename != tc.Expect {
+				t.Errorf("Filename mismatch. Expected '%s', got '%s'.", tc.Expect, resp.Filename)
+			}
 
-	// test naming via URL
-	req, _ = NewRequest("", ts.URL+"/url-filename?garbage")
-	req.Filename = ".test"
-
-	testFilename(t, req, ".test/url-filename")
-
-	// cleanup
-	err = os.Remove(".test")
-	if err != nil {
-		t.Error(err)
+			testComplete(t, resp)
+		})
 	}
 }
 
-// testChecksum executes a request and asserts that the computed checksum for
-// the downloaded file does or does not match the expected checksum.
-func testChecksum(t *testing.T, size int, algorithm, sum string, match bool) {
-	filename := fmt.Sprintf(".testChecksum-%s-%s", algorithm, sum[:8])
-	defer os.Remove(filename)
-
-	// create request
-	var h hash.Hash
-	b, _ := hex.DecodeString(sum)
-	switch algorithm {
-	case "md5":
-		h = md5.New()
-	case "sha1":
-		h = sha1.New()
-	case "sha256":
-		h = sha256.New()
-	case "sha512":
-		h = sha512.New()
-	default:
-		panic("unknown hash")
-	}
-
-	// fetch
-	req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size))
-	req.SetChecksum(h, b, true)
-	resp := DefaultClient.Do(req)
-	if err := resp.Err(); err != nil {
-		if err != ErrBadChecksum {
-			t.Errorf("Error in Client.Do(): %v", err)
-		} else if match {
-			t.Errorf("%v (%v bytes)", err, size)
-		}
-	} else if !match {
-		t.Errorf("Expected checksum mismatch but comparison succeeded (%s %v bytes)", algorithm, size)
-	}
-
-	testComplete(t, resp)
-}
-
-// TestChecksums executes a number of checksum tests via testChecksum.
+// TestChecksums checks that checksum validation behaves as expected for valid
+// and corrupted downloads.
 func TestChecksums(t *testing.T) {
-	// test md5
-	testChecksum(t, 128, "md5", "37eff01866ba3f538421b30b7cbefcac", true)
-	testChecksum(t, 128, "md5", "37eff01866ba3f538421b30b7cbefcad", false)
+	testCases := []struct {
+		size  int
+		hash  hash.Hash
+		sum   string
+		match bool
+	}{
+		{128, md5.New(), "37eff01866ba3f538421b30b7cbefcac", true},
+		{128, md5.New(), "37eff01866ba3f538421b30b7cbefcad", false},
+		{1024, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855b", true},
+		{1024, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855c", false},
+		{1048576, md5.New(), "c35cc7d8d91728a0cb052831bc4ef372", true},
+		{1048576, md5.New(), "c35cc7d8d91728a0cb052831bc4ef373", false},
+		{128, sha1.New(), "e6434bc401f98603d7eda504790c98c67385d535", true},
+		{128, sha1.New(), "e6434bc401f98603d7eda504790c98c67385d536", false},
+		{1024, sha1.New(), "5b00669c480d5cffbdfa8bdba99561160f2d1b77", true},
+		{1024, sha1.New(), "5b00669c480d5cffbdfa8bdba99561160f2d1b78", false},
+		{1048576, sha1.New(), "ecfc8e86fdd83811f9cc9bf500993b63069923be", true},
+		{1048576, sha1.New(), "ecfc8e86fdd83811f9cc9bf500993b63069923bf", false},
+		{128, sha256.New(), "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true},
+		{128, sha256.New(), "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false},
+		{1024, sha256.New(), "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true},
+		{1024, sha256.New(), "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false},
+		{1048576, sha256.New(), "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true},
+		{1048576, sha256.New(), "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false},
+		{128, sha512.New(), "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f7", true},
+		{128, sha512.New(), "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f8", false},
+		{1024, sha512.New(), "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566c", true},
+		{1024, sha512.New(), "37f652bf867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566d", false},
+		{1048576, sha512.New(), "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", true},
+		{1048576, sha512.New(), "ac1d097c4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", false},
+	}
 
-	testChecksum(t, 1024, "md5", "b2ea9f7fcea831a4a63b213f41a8855b", true)
-	testChecksum(t, 1024, "md5", "b2ea9f7fcea831a4a63b213f41a8855c", false)
+	for _, tc := range testCases {
+		comparison := "Match"
+		if !tc.match {
+			comparison = "Mismatch"
+		}
 
-	testChecksum(t, 1048576, "md5", "c35cc7d8d91728a0cb052831bc4ef372", true)
-	testChecksum(t, 1048576, "md5", "c35cc7d8d91728a0cb052831bc4ef373", false)
+		t.Run(fmt.Sprintf("%s %s", comparison, tc.sum[:8]), func(t *testing.T) {
+			filename := fmt.Sprintf(".testChecksum-%s-%s", comparison, tc.sum[:8])
+			defer os.Remove(filename)
 
-	// test sha1
-	testChecksum(t, 128, "sha1", "e6434bc401f98603d7eda504790c98c67385d535", true)
-	testChecksum(t, 128, "sha1", "e6434bc401f98603d7eda504790c98c67385d536", false)
+			b, _ := hex.DecodeString(tc.sum)
+			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", tc.size))
+			req.SetChecksum(tc.hash, b, true)
 
-	testChecksum(t, 1024, "sha1", "5b00669c480d5cffbdfa8bdba99561160f2d1b77", true)
-	testChecksum(t, 1024, "sha1", "5b00669c480d5cffbdfa8bdba99561160f2d1b78", false)
+			resp := DefaultClient.Do(req)
+			if err := resp.Err(); err != nil {
+				if err != ErrBadChecksum {
+					panic(err)
+				} else if tc.match {
+					t.Errorf("error: %v", err)
+				}
+			} else if !tc.match {
+				t.Errorf("expected: %v, got: %v", ErrBadChecksum, err)
+			}
 
-	testChecksum(t, 1048576, "sha1", "ecfc8e86fdd83811f9cc9bf500993b63069923be", true)
-	testChecksum(t, 1048576, "sha1", "ecfc8e86fdd83811f9cc9bf500993b63069923bf", false)
-
-	// test sha256
-	testChecksum(t, 128, "sha256", "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true)
-	testChecksum(t, 128, "sha256", "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false)
-
-	testChecksum(t, 1024, "sha256", "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true)
-	testChecksum(t, 1024, "sha256", "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false)
-
-	testChecksum(t, 1048576, "sha256", "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true)
-	testChecksum(t, 1048576, "sha256", "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false)
-
-	// test sha512
-	testChecksum(t, 128, "sha512", "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f7", true)
-	testChecksum(t, 128, "sha512", "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f8", false)
-
-	testChecksum(t, 1024, "sha512", "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566c", true)
-	testChecksum(t, 1024, "sha512", "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566d", false)
-
-	testChecksum(t, 1048576, "sha512", "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", true)
-	testChecksum(t, 1048576, "sha512", "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67a0", false)
+			testComplete(t, resp)
+		})
+	}
 }
 
-// testSize executes a request and asserts that the file size for the downloaded
+// testSize executes a request and asserts that the fil[e size for the downloaded
 // file does or does not match the expected size.
 func testSize(t *testing.T, url string, size int64, match bool) {
 	req, _ := NewRequest(".testSize-mismatch-head", url)

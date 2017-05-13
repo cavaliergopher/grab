@@ -8,7 +8,7 @@ check:
 
 clean:
 	$(GO) clean -x ./...
-	rm -vf ./.test*
+	rm -rvf ./.test*
 
 test-deps:
 	$(GOGET) golang.org/x/tools/cmd/cover
