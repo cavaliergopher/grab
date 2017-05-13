@@ -165,53 +165,51 @@ func TestChecksums(t *testing.T) {
 	}
 }
 
-// testSize executes a request and asserts that the fil[e size for the downloaded
-// file does or does not match the expected size.
-func testSize(t *testing.T, url string, size int64, match bool) {
-	req, _ := NewRequest(".testSize-mismatch-head", url)
-	req.Size = size
-
-	resp := DefaultClient.Do(req)
-	err := resp.Err()
-	if match {
-		if err != nil {
-			t.Errorf(err.Error())
-		}
-	} else {
-		// we want a ContentLengthMismatch error
-		if err != ErrBadLength {
-			t.Errorf("Expected content length mismatch. Got: %v", err)
-		}
-	}
-
-	if err == nil {
-		// delete file
-		if err := os.Remove(resp.Filename); err != nil {
-			t.Errorf("Error deleting test file: %v", err)
-		}
-	}
-
-	testComplete(t, resp)
-}
-
-// TestSize exeuctes a number of size tests via testSize.
-func TestSize(t *testing.T) {
+// TestContentLength ensures that ErrBadLength is returned if a server response
+// does not match the requested length.
+func TestContentLength(t *testing.T) {
 	size := int64(32768)
+	testCases := []struct {
+		Name   string
+		URL    string
+		Expect int64
+		Match  bool
+	}{
+		{"Good size in HEAD request", fmt.Sprintf("?size=%d", size), size, true},
+		{"Good size in GET request", fmt.Sprintf("?nohead&size=%d", size), size, true},
+		{"Bad size in HEAD request", fmt.Sprintf("?size=%d", size-1), size, false},
+		{"Bad size in GET request", fmt.Sprintf("?nohead&size=%d", size-1), size, false},
+	}
 
-	// bad size should error in HEAD request
-	testSize(t, ts.URL+fmt.Sprintf("?size=%d", size-1), size, false)
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			req, _ := NewRequest(".testSize-mismatch-head", ts.URL+tc.URL)
+			req.Size = size
 
-	// bad size should error in GET request
-	testSize(t, ts.URL+fmt.Sprintf("?nohead&size=%d", size-1), size, false)
+			resp := DefaultClient.Do(req)
+			defer os.Remove(resp.Filename)
+			err := resp.Err()
+			if tc.Match {
+				if err == ErrBadLength {
+					t.Errorf("error: %v", err)
+				} else if err != nil {
+					panic(err)
+				} else {
+					if resp.Size != size {
+						t.Errorf("expected %v bytes, got %v bytes", size, resp.Size)
+					}
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected: %v, got %v", ErrBadLength, err)
+				} else if err != ErrBadLength {
+					panic(err)
+				}
+			}
 
-	// test good size in HEAD request
-	testSize(t, ts.URL+fmt.Sprintf("?size=%d", size), size, true)
-
-	// test good size in GET request
-	testSize(t, ts.URL+fmt.Sprintf("?nohead&size=%d", size), size, true)
-
-	// test good size with no Content-Length header
-	// TODO: testSize(t, ts.URL+fmt.Sprintf("?nocl&size=%d", size), size, false)
+			testComplete(t, resp)
+		})
+	}
 }
 
 // TestAutoResume tests segmented downloading of a large file.

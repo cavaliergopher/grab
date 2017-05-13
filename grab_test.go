@@ -3,6 +3,7 @@ package grab
 import (
 	"bufio"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -115,7 +116,9 @@ func TestMain(m *testing.M) {
 
 		// set response headers
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size-offset))
-		w.Header().Set("Accept-Ranges", "bytes")
+		if ranged {
+			w.Header().Set("Accept-Ranges", "bytes")
+		}
 
 		// serve content body if method == "GET"
 		if r.Method == "GET" {
@@ -136,6 +139,71 @@ func TestMain(m *testing.M) {
 
 	// run tests
 	os.Exit(m.Run())
+}
+
+// TestTestServer ensures that the test server behaves as expected so that it
+// does not polute other tests.
+func TestTestServer(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", ts.URL+"?nohead", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+
+		expectSize := 1048576
+		if h := resp.ContentLength; h != int64(expectSize) {
+			t.Fatalf("expected Content-Length: %v, got %v", expectSize, h)
+		}
+		b, _ := ioutil.ReadAll(resp.Body)
+		if len(b) != expectSize {
+			t.Fatalf("expected body length: %v, got %v", expectSize, len(b))
+		}
+
+		if h := resp.Header.Get("Accept-Ranges"); h != "bytes" {
+			t.Fatalf("expected Accept-Ranges: bytes, got: %v", h)
+		}
+	})
+
+	t.Run("nohead", func(t *testing.T) {
+		req, _ := http.NewRequest("HEAD", ts.URL+"?nohead", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			panic("HEAD request was allowed despite ?nohead being set")
+		}
+	})
+
+	t.Run("size", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", ts.URL+"?size=321", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+		if resp.ContentLength != 321 {
+			t.Fatalf("expected Content-Length: %v, got %v", 321, resp.ContentLength)
+		}
+		b, _ := ioutil.ReadAll(resp.Body)
+		if len(b) != 321 {
+			t.Fatalf("expected body length: %v, got %v", 321, len(b))
+		}
+	})
+
+	t.Run("ranged=false", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", ts.URL+"?ranged=false", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+		if h := resp.Header.Get("Accept-Ranges"); h != "" {
+			t.Fatalf("expected empty Accept-Ranges header, got: %v", h)
+		}
+	})
+
+	t.Run("filename", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", ts.URL+"?filename=test", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+
+		expect := "attachment;filename=\"test\""
+		if h := resp.Header.Get("Content-Disposition"); h != expect {
+			t.Fatalf("expected Content-Disposition header: %v, got %v", expect, h)
+		}
+	})
 }
 
 // TestGet tests a simple file download using a convenience wrapper.
