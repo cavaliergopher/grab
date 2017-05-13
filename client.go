@@ -109,14 +109,12 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 		}()
 	}
 
+	// queue requests
 	go func() {
-		// send requests
 		for _, req := range requests {
 			reqch <- req
 		}
 		close(reqch)
-
-		// wait for transfers to complete
 		wg.Wait()
 		close(respch)
 	}()
@@ -124,11 +122,10 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 	return respch
 }
 
-// do creates a Response context for the given request. It does not transfer any
-// body content as this may be preferable in a separate goroutine.
+// do submits a HTTP request and returns a Response. It does not start
+// downloading the response content. This should be performed in a separate
+// goroutine by calling Response.copy.
 func (c *Client) do(req *Request) (resp *Response) {
-	c.setUserAgent(req.HTTPRequest)
-
 	// cancel will be called on all code-paths via resp.close
 	ctx, cancel := context.WithCancel(req.Context())
 	resp = &Response{
@@ -154,47 +151,22 @@ func (c *Client) do(req *Request) (resp *Response) {
 		return
 	}
 
-	// try resume an existing file or find the name of an unknown file by sending
+	// check for resume support or find the name of an unknown file by sending
 	// a HEAD request first
 	if resp.fi != nil || resp.Filename == "" {
 		hreq := new(http.Request)
 		*hreq = *req.HTTPRequest
 		hreq.Method = "HEAD"
-		hresp, err := c.HTTPClient.Do(hreq)
-		if err != nil {
-			resp.close(err)
-			return
-		}
-
-		if err := resp.readResponse(hresp); err != nil {
-			resp.close(err)
-			return
-		}
-
-		if ok, err := resp.checkExisting(); ok || err != nil {
+		if ok, err := c.doHTTPRequest(hreq, resp); ok || err != nil {
 			resp.close(err)
 			return
 		}
 	}
 
-	// send GET request to download file
-	hresp, err := c.HTTPClient.Do(req.HTTPRequest)
-	if err != nil {
+	// send GET request
+	if ok, err := c.doHTTPRequest(req.HTTPRequest, resp); ok || err != nil {
 		resp.close(err)
 		return
-	}
-
-	if err := resp.readResponse(hresp); err != nil {
-		resp.close(err)
-		return
-	}
-
-	// if we are resuming, we already know about the existing file
-	if !resp.DidResume {
-		if ok, err := resp.checkExisting(); ok || err != nil {
-			resp.close(err)
-			return
-		}
 	}
 
 	// open destination for writing
@@ -206,10 +178,27 @@ func (c *Client) do(req *Request) (resp *Response) {
 	return
 }
 
-// setUserAgent sets the User-Agent string of all out-going requests from this
-// Client.
-func (c *Client) setUserAgent(req *http.Request) {
-	if c.UserAgent != "" && req.Header.Get("User-Agent") == "" {
-		req.Header.Set("User-Agent", c.UserAgent)
+// doHTTPRequest sends a HTTP Request, processes the response and checks for
+// any existing file if the filename is now known.
+//
+// Returns true if the existing file is already completed.
+func (c *Client) doHTTPRequest(hreq *http.Request, resp *Response) (bool, error) {
+	if c.UserAgent != "" && hreq.Header.Get("User-Agent") == "" {
+		hreq.Header.Set("User-Agent", c.UserAgent)
 	}
+
+	hresp, err := c.HTTPClient.Do(hreq)
+	if err != nil {
+		return false, err
+	}
+
+	if err := resp.readResponse(hresp); err != nil {
+		return false, err
+	}
+
+	if !resp.DidResume {
+		return resp.checkExisting()
+	}
+
+	return false, nil
 }

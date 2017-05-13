@@ -423,6 +423,8 @@ func (c *Response) close(err error) error {
 		panic("response already closed")
 	}
 
+	c.fi = nil
+
 	if c.writer != nil {
 		c.writer.Close()
 		c.writer = nil
@@ -436,7 +438,6 @@ func (c *Response) close(err error) error {
 	c.End = time.Now()
 	close(c.Done)
 
-	// may cause re-entry?
 	if c.cancel != nil {
 		c.cancel()
 	}

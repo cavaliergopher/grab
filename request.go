@@ -31,10 +31,6 @@ type Request struct {
 	// directory.
 	Filename string
 
-	// CreateMissing specifies that any missing directories in the Filename path
-	// should be automatically created.
-	CreateMissing bool
-
 	// SkipExisting specifies that any existing files at destination Filename path
 	// will be naively skipped and ErrFileExists returned.
 	SkipExisting bool
@@ -114,17 +110,17 @@ func (r *Request) URL() *url.URL {
 	return r.HTTPRequest.URL
 }
 
-// SetChecksum sets the desired checksum and hashing algorithm for a file
-// transfer request. Once the transfer is complete, the given hashing algorithm
-// will be used to compute the checksum of the transferred file. The hash will
-// then be compared with the given hash. If the hashes do not match, an error
-// will be returned by the associated Response.Err method.
+// SetChecksum sets the desired hashing algorithm and checksum value for a
+// download request. Once the download is complete, the given hashing algorithm
+// will be used to compute the actual checksum of the downloaded file. If the
+// checksums do not match, an error will be returned by the associated
+// Response.Err method.
 //
-// If deleteOnError is true, the transferred file will be deleted automatically
+// If deleteOnError is true, the downloaded file will be deleted automatically
 // if it fails checksum validation.
 //
-// The given hash must be unique to this request to prevent corruption from
-// other requests in other goroutines. E.g. Sha256.New.
+// The given hash must not be used by any other request or goroutines to prevent
+// corruption.
 //
 // To disable checksum validation (default), call SetChecksum with a nil hash.
 func (r *Request) SetChecksum(h hash.Hash, sum []byte, deleteOnError bool) {
