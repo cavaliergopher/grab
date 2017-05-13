@@ -4,8 +4,6 @@ go:
   - 1.8.x
   - 1.7.x
 
-install: make test-deps
-
 script: make check
 
 env: 

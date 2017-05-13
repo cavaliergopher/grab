@@ -13,8 +13,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/djherbis/times"
 )
 
 // testComplete validates that a completed Response has all the desired fields.
@@ -194,10 +192,8 @@ func TestContentLength(t *testing.T) {
 					t.Errorf("error: %v", err)
 				} else if err != nil {
 					panic(err)
-				} else {
-					if resp.Size != size {
-						t.Errorf("expected %v bytes, got %v bytes", size, resp.Size)
-					}
+				} else if resp.Size != size {
+					t.Errorf("expected %v bytes, got %v bytes", size, resp.Size)
 				}
 			} else {
 				if err == nil {
@@ -216,73 +212,41 @@ func TestContentLength(t *testing.T) {
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
-	filename := ".testAutoResume"
 	sum, _ := hex.DecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
+	filename := ".testAutoResume"
 
-	// TODO: random segment size
+	defer os.Remove(filename)
 
-	// download segment at a time
-	filebtime := time.Time{}
 	for i := 0; i < segs; i++ {
-		// request larger segment
 		segsize := (i + 1) * (size / segs)
-		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", segsize))
-
-		// checksum the last request
-		if i == segs-1 {
-			req.SetChecksum(sha256.New(), sum, false)
-		}
-
-		// transfer
-		resp := DefaultClient.Do(req)
-		if err := resp.Err(); err != nil {
-			t.Errorf("Error segment %d (%d bytes): %v", i+1, segsize, err)
-			break
-		}
-
-		if i > 0 && !resp.DidResume {
-			t.Errorf("Expected segment %d to resume previous segment but it did not.", i+1)
-		}
-
-		testComplete(t, resp)
-
-		// only check birth time on OS's that support it
-		if times.HasBirthTime {
-			if ts, err := times.Stat(req.Filename); err != nil {
-				t.Errorf(err.Error())
-			} else {
-				if filebtime.Second() == 0 && filebtime.Nanosecond() == 0 {
-					filebtime = ts.BirthTime()
-				} else {
-					// check creation date (only accurate to one second)
-					if ts.BirthTime() != filebtime {
-						t.Errorf("File timestamp changed for segment %d ( from %v to %v )", i+1, filebtime, ts.BirthTime())
-						break
-					}
-				}
+		t.Run(fmt.Sprintf("Range %v: up to %v bytes", i+1, segsize), func(t *testing.T) {
+			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", segsize))
+			if i == segs-1 {
+				req.SetChecksum(sha256.New(), sum, false)
 			}
 
-			// sleep to allow ctime to roll over at least once
-			time.Sleep(time.Duration(1100/segs) * time.Millisecond)
-		}
+			resp := DefaultClient.Do(req)
+			if err := resp.Err(); err != nil {
+				t.Errorf("error: %v", err)
+				return
+			}
+			if i > 0 && !resp.DidResume {
+				t.Errorf("expected Response.DidResume to be true")
+			}
+			testComplete(t, resp)
+		})
 	}
 
-	// error if existing file is larger than requested file
-	{
+	t.Run("Failure", func(t *testing.T) {
 		// request smaller segment
-		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size/segs))
+		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size-1))
 		resp := DefaultClient.Do(req)
 		if err := resp.Err(); err != ErrBadLength {
-			t.Errorf("Expected bad length error, got: %v", err)
+			t.Errorf("expected ErrBadLength for smaller request, got: %v", err)
 		}
-	}
+	})
 
-	// TODO: existing file is corrupted
-
-	// delete downloaded file
-	if err := os.Remove(filename); err != nil {
-		t.Errorf("Error deleting test file: %v", err)
-	}
+	// TODO: test when existing file is corrupted
 }
 
 func TestSkipExisting(t *testing.T) {
@@ -384,13 +348,11 @@ func TestCancelContext(t *testing.T) {
 	time.Sleep(time.Millisecond * 500)
 	cancel()
 	for resp := range respch {
-		// err should be context.Cancelled or http.errRequestCanceled
+		defer os.Remove(resp.Filename)
+
+		// err should be context.Canceled or http.errRequestCanceled
 		if !strings.Contains(resp.Err().Error(), "canceled") {
 			t.Errorf("expected '%v', got '%v'", context.Canceled, resp.Err())
-		}
-
-		if resp.Filename != "" {
-			os.Remove(resp.Filename)
 		}
 	}
 }

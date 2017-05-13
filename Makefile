@@ -4,15 +4,14 @@ GOGET = $(GO) get -u
 all: check lint
 
 check:
-	$(GO) test -v -cover ./...
+	$(GO) test -cover ./...
+
+install:
+	$(GO) install -v ./...
 
 clean:
 	$(GO) clean -x ./...
 	rm -rvf ./.test*
-
-test-deps:
-	$(GOGET) golang.org/x/tools/cmd/cover
-	$(GOGET) github.com/djherbis/times
 
 lint:
 	gofmt -l -e -s . || :
@@ -21,9 +20,9 @@ lint:
 	gocyclo -over 15 . || :
 	misspell ./* || :
 
-lint-deps:	
+deps:	
 	$(GOGET) github.com/golang/lint/golint
 	$(GOGET) github.com/fzipp/gocyclo
 	$(GOGET) github.com/client9/misspell/cmd/misspell
 
-.PHONY: all deps check test-deps lint lint-deps
+.PHONY: all check install clean lint deps
