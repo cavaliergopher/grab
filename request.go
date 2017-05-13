@@ -31,12 +31,19 @@ type Request struct {
 	// directory.
 	Filename string
 
-	// SkipExisting specifies that any existing files at destination Filename path
-	// will be naively skipped and ErrFileExists returned.
+	// SkipExisting specifies that ErrFileExists should be returned if the
+	// destination path already exists. The existing file will not be checked for
+	// completeness.
 	SkipExisting bool
 
+	// NoResume specifies that a partially completed download will be restarted
+	// without attempting to resume any existing file. If the download is already
+	// complete in full, it will not be restarted.
+	NoResume bool
+
 	// NoCreateDirectories specifies that any missing directories in the given
-	// Filename path should not be created if they do not already exist.
+	// Filename path should not be created automatically, if they do not already
+	// exist.
 	NoCreateDirectories bool
 
 	// Size specifies the expected size of the file transfer if known. If the

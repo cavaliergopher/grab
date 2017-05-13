@@ -52,7 +52,8 @@ func testComplete(t *testing.T, resp *Response) {
 
 // TestFilenameResolutions tests that the destination filename for Requests can
 // be determined correctly, using an explicitly requested path,
-// Content-Disposition headers or a URL path.
+// Content-Disposition headers or a URL path - with or without an existing
+// target directory.
 func TestFilenameResolution(t *testing.T) {
 	testCases := []struct {
 		Name     string
@@ -246,6 +247,21 @@ func TestAutoResume(t *testing.T) {
 		}
 	})
 
+	t.Run("No resume", func(t *testing.T) {
+		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size+1))
+		req.NoResume = true
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			panic(err)
+		}
+
+		if resp.DidResume == true {
+			t.Errorf("expected Response.DidResume to be false")
+		}
+
+		testComplete(t, resp)
+	})
+
 	// TODO: test when existing file is corrupted
 }
 
@@ -386,5 +402,4 @@ func TestNestedDirectory(t *testing.T) {
 			t.Errorf("expected: %v, got: %v", os.ErrNotExist, err)
 		}
 	})
-
 }

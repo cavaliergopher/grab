@@ -288,6 +288,10 @@ func (c *Response) checkExisting() (bool, error) {
 		return true, nil
 	}
 
+	if c.Request.NoResume {
+		return false, nil
+	}
+
 	// prepare for resuming a partial completed download
 	if c.CanResume {
 		c.Request.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", c.fi.Size()))
