@@ -207,7 +207,6 @@ func (c *Response) setFileInfo() error {
 func (c *Response) readResponse(resp *http.Response) error {
 	c.HTTPResponse = resp
 	c.Size = c.bytesTransferred + resp.ContentLength
-
 	if resp.Header.Get("Accept-Ranges") == "bytes" {
 		c.CanResume = true
 	}
@@ -229,7 +228,7 @@ func (c *Response) readResponse(resp *http.Response) error {
 			return err
 		}
 
-		// Request.Filename will be empty or a directory
+		// Request.Filename must be empty or a directory
 		c.Filename = filepath.Join(c.Request.Filename, filename)
 		if err := c.setFileInfo(); err != nil {
 			return err
@@ -242,6 +241,8 @@ func (c *Response) readResponse(resp *http.Response) error {
 // checkExisting returns true if a file already exists for this request and is
 // 100% completed. The size of the file is checked against Request.Size if set,
 // or the Content-Length returned by the remote server.
+//
+// This function should not be called if resuming a previous download.
 //
 // If a checksum has been requested, it will be executed on the existing file
 // and an error returned if it fails validation.
@@ -259,9 +260,12 @@ func (c *Response) checkExisting() (bool, error) {
 	// determine expected file size
 	size := c.Request.Size
 	if size == 0 && c.HTTPResponse != nil {
-		// This assumes that the HTTPResponse is for a HEAD or non-ranged GET
-		// request. Ranged requests will not return the full file size; just the
-		// size of the requested range.
+		// This line assumes that the Content-Length header in the HTTPResponse
+		// returns the full file size, not a subrange. This means the response must
+		// not be a response to a GET request with the Range header set.
+		//
+		// If the response was for a ranged request, it means we are resuming a
+		// previous download and this function should not have been called.
 		size = c.HTTPResponse.ContentLength
 	}
 
@@ -340,25 +344,27 @@ func (c *Response) copy() error {
 
 	buffer := make([]byte, c.bufferSize)
 	for {
-		// check for cancellation
-		select {
-		case <-c.ctx.Done():
-			return c.close(c.ctx.Err())
-
-		default:
-			// continue
+		if err := isCanceled(c.ctx); err != nil {
+			return c.close(err)
 		}
 
-		n, err := c.HTTPResponse.Body.Read(buffer)
+		nr, err := c.HTTPResponse.Body.Read(buffer)
 		if err != nil && err != io.EOF {
 			return c.close(err)
 		}
 
-		// TODO: fix buffer underwrites
-		if _, werr := c.writer.Write(buffer[:n]); werr != nil {
+		if err := isCanceled(c.ctx); err != nil {
+			return c.close(err)
+		}
+
+		nw, werr := c.writer.Write(buffer[:nr])
+		if werr != nil {
 			return c.close(werr)
 		}
-		atomic.AddInt64(&c.bytesTransferred, int64(n))
+		if nw != nr {
+			return c.close(io.ErrShortWrite)
+		}
+		atomic.AddInt64(&c.bytesTransferred, int64(nw))
 
 		if err == io.EOF {
 			c.HTTPResponse.Body.Close()
@@ -380,6 +386,10 @@ func (c *Response) checksum() error {
 		return nil
 	}
 
+	if c.Filename == "" {
+		panic("filename not set")
+	}
+
 	// open downloaded file
 	f, err := os.Open(c.Filename)
 	if err != nil {
@@ -388,8 +398,10 @@ func (c *Response) checksum() error {
 	defer f.Close()
 
 	// hash file
-	if _, err := io.Copy(c.Request.hash, f); err != nil {
+	if nc, err := copyBuffer(c.Request.Context(), c.Request.hash, f, nil); err != nil {
 		return err
+	} else if nc != c.Size {
+		return ErrBadLength
 	}
 
 	// compare checksum

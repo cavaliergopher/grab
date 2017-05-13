@@ -154,7 +154,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 		return
 	}
 
-	// try resume an existing file or find the name of an unkown file by sending
+	// try resume an existing file or find the name of an unknown file by sending
 	// a HEAD request first
 	if resp.fi != nil || resp.Filename == "" {
 		hreq := new(http.Request)
