@@ -23,7 +23,9 @@ type Request struct {
 	HTTPRequest *http.Request
 
 	// Filename specifies the path where the file transfer will be stored in
-	// local storage.
+	// local storage. If Filename is empty or a directory, the true Filename will
+	// be resolved using Content-Disposition headers or the request URL and
+	// returned in the corresponding Response.Filename.
 	//
 	// An empty string means the transfer will be stored in the current working
 	// directory.
@@ -38,8 +40,8 @@ type Request struct {
 	SkipExisting bool
 
 	// Size specifies the expected size of the file transfer if known. If the
-	// server response size does not match, the transfer is cancelled and an
-	// error returned.
+	// server response size does not match, the transfer is cancelled and
+	// ErrBadLength returned.
 	Size int64
 
 	// BufferSize specifies the size in bytes of the buffer that is used for
@@ -48,12 +50,12 @@ type Request struct {
 	// to the transfer progress statistics. Default: 32KB.
 	BufferSize int
 
-	// hash, checksum and deleteOnError are set via SetChecksum.
+	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash
 	checksum      []byte
 	deleteOnError bool
 
-	// Context for cancellation and timeout
+	// Context for cancellation and timeout - set via WithContext
 	ctx context.Context
 }
 
@@ -110,16 +112,6 @@ func (r *Request) WithContext(ctx context.Context) *Request {
 // URL returns the URL to be requested from the remote server.
 func (r *Request) URL() *url.URL {
 	return r.HTTPRequest.URL
-}
-
-// isCancelled returns true if the Request Context has been cancelled.
-func (r *Request) isCancelled() bool {
-	select {
-	case <-r.Context().Done():
-		return true
-	default:
-		return false
-	}
 }
 
 // SetChecksum sets the desired checksum and hashing algorithm for a file

@@ -39,9 +39,9 @@ func NewClient() *Client {
 // functions.
 var DefaultClient = NewClient()
 
-// Do sends a file transfer request and returns a file transfer response
-// context, following policy (e.g. redirects, cookies, auth) as configured on
-// the client's HTTPClient.
+// Do sends a file transfer request and returns a file transfer response,
+// following policy (e.g. redirects, cookies, auth) as configured on the
+// client's HTTPClient.
 //
 // Like http.Get, Do blocks while the transfer is initiated, but returns as soon
 // as the transfer has started transferring in a background goroutine, or if it
@@ -65,7 +65,7 @@ func (c *Client) Do(req *Request) *Response {
 // each download.
 //
 // Slow Response receivers will cause a worker to block and therefore delay the
-// start of the transfer for an already initiated connection, potentially
+// start of the transfer for an already initiated connection - potentially
 // causing a server timeout. It is the caller's responsibility to ensure a
 // sufficient buffer size is used for the Response channel to prevent this.
 //
@@ -131,8 +131,6 @@ func (c *Client) do(req *Request) (resp *Response) {
 
 	// cancel will be called on all code-paths via resp.close
 	ctx, cancel := context.WithCancel(req.Context())
-
-	// create a response to track the progress and completion of a download
 	resp = &Response{
 		Request:    req,
 		Start:      time.Now(),
@@ -179,7 +177,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 		}
 	}
 
-	// send transfer request
+	// send GET request to download file
 	hresp, err := c.HTTPClient.Do(req.HTTPRequest)
 	if err != nil {
 		resp.close(err)

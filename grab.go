@@ -54,10 +54,10 @@ func Get(dst, urlStr string) (*Response, error) {
 // requested URLs to the given destination directory using the given number of
 // concurrent worker goroutines.
 //
-// The Response context for each requested URL is sent through the returned
-// Response channel, as soon as a worker receives a response from the remote
-// server. The Response can then be used to track the progress of the download
-// while it is in progress.
+// The Response for each requested URL is sent through the returned Response
+// channel, as soon as a worker receives a response from the remote server. The
+// Response can then be used to track the progress of the download while it is
+// in progress.
 //
 // The returned Response channel will be closed by Grab, only once all downloads
 // have completed or failed.

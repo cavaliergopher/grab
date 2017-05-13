@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Response represents the response to a completed or in-process download
+// Response represents the response to a completed or in-progress download
 // request.
 //
 // A response may be returned as soon a HTTP response is received from a remote
@@ -20,10 +20,10 @@ import (
 //
 // All Response method calls are thread-safe.
 type Response struct {
-	// The Request that was sent to obtain this Response.
+	// The Request that was submitted to obtain this Response.
 	Request *Request
 
-	// HTTPResponse specifies the HTTP response received from the remote server.
+	// HTTPResponse represents the HTTP response received from an HTTP request.
 	//
 	// The response Body should not be used as it will be consumed and closed by
 	// grab.
@@ -41,19 +41,19 @@ type Response struct {
 
 	// End specifies the time at which the file transfer completed.
 	//
-	// This should not be read until IsComplete returns true.
+	// This will return zero until the transfer has completed.
 	End time.Time
 
 	// CanResume specifies that the remote server advertised that it can resume
-	// previous downloads as the 'Accept-Ranges: bytes' is set.
+	// previous downloads, as the 'Accept-Ranges: bytes' is set.
 	CanResume bool
 
-	// DidResume specifies that the file transfer resumed a previously
-	// incomplete transfer.
+	// DidResume specifies that the file transfer resumed a previously incomplete
+	// transfer.
 	DidResume bool
 
 	// Done is closed once the transfer is finalized, either successfully or with
-	// errors.
+	// errors. Errors are available via Response.Err
 	Done chan struct{}
 
 	// ctx is a Context that controls cancellation of an inprogress transfer
@@ -63,37 +63,34 @@ type Response struct {
 	// Response.
 	cancel context.CancelFunc
 
+	// fi is the FileInfo for the destination file if it already existed before
+	// transfer started.
+	fi os.FileInfo
+
 	// writer is the file handle used to write the downloaded file to local
 	// storage
-	writer io.WriteCloser
-
+	writer     io.WriteCloser
 	writeFlags int
 
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
 	bytesResumed int64
 
-	// bytesTransferred specifies the number of bytes which have already been
-	// transferred and should only be accessed atomically.
+	// bytesTransferred specifies the toal number of bytes that have been
+	// transferred for this transfer (including any bytes resumed).
 	bytesTransferred int64
 
-	// bufferSize specifies the site in bytes of the transfer buffer.
+	// bufferSize specifies the size in bytes of the transfer buffer.
 	bufferSize int
 
-	// Error specifies any error that may have occurred during the file
-	// transfer.
-	//
+	// Error contains any error that may have occurred during the file transfer.
 	// This should not be read until IsComplete returns true.
 	err error
-
-	// fi is the FileInfo for the destination file if it already existed before
-	// transfer started.
-	fi os.FileInfo
 }
 
 // Cancel cancels the file transfer by cancelling the underlying Context for
 // this Response. Cancel blocks until the transfer is closed and returns any
-// error, typically, context.Canceled.
+// error - typically context.Canceled.
 func (c *Response) Cancel() error {
 	c.cancel()
 	return c.Err()
@@ -113,9 +110,9 @@ func (c *Response) Err() error {
 	return c.err
 }
 
-// IsComplete indicates whether the Response transfer context has completed with
-// either a success or failure. If the transfer was unsuccessful, Response.Error
-// will be non-nil.
+// IsComplete indicates whether the Response transfer context has completed. If
+// the transfer failed, IsComplete will return true and Response.Error will be
+// non-nil.
 func (c *Response) IsComplete() bool {
 	select {
 	case <-c.Done:
@@ -125,16 +122,16 @@ func (c *Response) IsComplete() bool {
 	}
 }
 
-// BytesTransferred returns the number of bytes which have already been
-// downloaded, including any data used to resume a previous download.
+// BytesTransferred returns the total number of bytes which have been copied to
+// the destination, including any bytes that were resumed from a previous
+// download.
 func (c *Response) BytesTransferred() int64 {
 	return atomic.LoadInt64(&c.bytesTransferred)
 }
 
-// Progress returns the ratio of bytes which have already been downloaded over
-// the total file size as a fraction of 1.00.
-//
-// Multiply the returned value by 100 to return the percentage completed.
+// Progress returns the ratio of bytes which have already been copied to the
+// total file size. Multiply the returned value by 100 to return the percentage
+// completed.
 func (c *Response) Progress() float64 {
 	if c.Size == 0 {
 		return 0
@@ -162,22 +159,14 @@ func (c *Response) ETA() time.Time {
 		return c.End
 	}
 
-	// total progress through transfer
-	transferred := c.BytesTransferred()
-	if transferred == 0 {
+	// compute seconds remaining
+	transferred := c.BytesTransferred() - c.bytesResumed
+	if transferred <= 0 {
 		return time.Time{}
 	}
-
-	// bytes remaining
-	remainder := c.Size - transferred
-
-	// time elapsed
+	remainder := c.Size - c.BytesTransferred()
 	duration := time.Now().Sub(c.Start)
-
-	// average bytes per second for transfer
-	bps := float64(transferred-c.bytesResumed) / duration.Seconds()
-
-	// estimated seconds remaining
+	bps := float64(transferred) / duration.Seconds()
 	secs := float64(remainder) / bps
 
 	return time.Now().Add(time.Duration(secs) * time.Second)
