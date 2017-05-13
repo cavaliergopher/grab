@@ -152,7 +152,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 	}
 
 	// check for resume support or find the name of an unknown file by sending
-	// a HEAD request first
+	// a HEAD request
 	if !req.NoResume && (resp.fi != nil || resp.Filename == "") {
 		hreq := new(http.Request)
 		*hreq = *req.HTTPRequest

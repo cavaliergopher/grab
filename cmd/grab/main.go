@@ -72,7 +72,7 @@ func updateUI(responses []*grab.Response) {
 			} else {
 				fmt.Printf("Finished %s %d / %d bytes (%d%%)\n",
 					resp.Filename,
-					resp.BytesTransferred(),
+					resp.BytesComplete(),
 					resp.Size,
 					int(100*resp.Progress()))
 			}
@@ -84,11 +84,13 @@ func updateUI(responses []*grab.Response) {
 	inProgress = 0
 	for _, resp := range responses {
 		if resp != nil {
-			fmt.Printf("Downloading %s %d / %d bytes (%d%%)\033[K\n",
+			fmt.Printf("Downloading %s %d / %d bytes (%d%%) - %.02fKBp/s ETA: %ds \033[K\n",
 				resp.Filename,
-				resp.BytesTransferred(),
+				resp.BytesComplete(),
 				resp.Size,
-				int(100*resp.Progress()))
+				int(100*resp.Progress()),
+				resp.BytesPerSecond()/1024,
+				int64(resp.ETA().Sub(time.Now()).Seconds()))
 			inProgress++
 		}
 	}

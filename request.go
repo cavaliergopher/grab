@@ -24,8 +24,7 @@ type Request struct {
 
 	// Filename specifies the path where the file transfer will be stored in
 	// local storage. If Filename is empty or a directory, the true Filename will
-	// be resolved using Content-Disposition headers or the request URL and
-	// returned in the corresponding Response.Filename.
+	// be resolved using Content-Disposition headers or the request URL.
 	//
 	// An empty string means the transfer will be stored in the current working
 	// directory.
@@ -38,7 +37,7 @@ type Request struct {
 
 	// NoResume specifies that a partially completed download will be restarted
 	// without attempting to resume any existing file. If the download is already
-	// complete in full, it will not be restarted.
+	// completed in full, it will not be restarted.
 	NoResume bool
 
 	// NoCreateDirectories specifies that any missing directories in the given
@@ -116,13 +115,13 @@ func (r *Request) WithContext(ctx context.Context) *Request {
 	return r2
 }
 
-// URL returns the URL to be requested from the remote server.
+// URL returns the URL to be downloaded.
 func (r *Request) URL() *url.URL {
 	return r.HTTPRequest.URL
 }
 
-// SetChecksum sets the desired hashing algorithm and checksum value for a
-// download request. Once the download is complete, the given hashing algorithm
+// SetChecksum sets the desired hashing algorithm and checksum value to validate
+// a downloaded file. Once the download is complete, the given hashing algorithm
 // will be used to compute the actual checksum of the downloaded file. If the
 // checksums do not match, an error will be returned by the associated
 // Response.Err method.
@@ -130,10 +129,10 @@ func (r *Request) URL() *url.URL {
 // If deleteOnError is true, the downloaded file will be deleted automatically
 // if it fails checksum validation.
 //
-// The given hash must not be used by any other request or goroutines to prevent
-// corruption.
+// To prevent corruption of the computed checksum, the given hash must not be
+// used by any other request or goroutines.
 //
-// To disable checksum validation (default), call SetChecksum with a nil hash.
+// To disable checksum validation, call SetChecksum with a nil hash.
 func (r *Request) SetChecksum(h hash.Hash, sum []byte, deleteOnError bool) {
 	if h == nil {
 		h, sum, deleteOnError = nil, nil, false

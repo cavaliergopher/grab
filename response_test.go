@@ -36,7 +36,7 @@ func TestResponseProgress(t *testing.T) {
 		t.Errorf("Transfer is complete but progress is %v", p)
 	}
 
-	if s := resp.BytesTransferred(); s != size {
+	if s := resp.BytesComplete(); s != size {
 		t.Errorf("Expected to transfer %v bytes, got %v", size, s)
 	}
 }

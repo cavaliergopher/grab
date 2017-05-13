@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -45,7 +46,7 @@ type Response struct {
 	End time.Time
 
 	// CanResume specifies that the remote server advertised that it can resume
-	// previous downloads, as the 'Accept-Ranges: bytes' is set.
+	// previous downloads, as the 'Accept-Ranges: bytes' header is set.
 	CanResume bool
 
 	// DidResume specifies that the file transfer resumed a previously incomplete
@@ -76,9 +77,14 @@ type Response struct {
 	// transferred before this transfer began.
 	bytesResumed int64
 
-	// bytesTransferred specifies the toal number of bytes that have been
-	// transferred for this transfer (including any bytes resumed).
+	// bytesTransferred specifies the total number of bytes that have been
+	// transferred for this transfer (not including any bytes resumed).
 	bytesTransferred int64
+
+	// bytesPerSecond specifies the number of bytes that have been transferred in
+	// the last 1-second window.
+	bytesPerSecond   float64
+	bytesPerSecondMu sync.Mutex
 
 	// bufferSize specifies the size in bytes of the transfer buffer.
 	bufferSize int
@@ -86,6 +92,17 @@ type Response struct {
 	// Error contains any error that may have occurred during the file transfer.
 	// This should not be read until IsComplete returns true.
 	err error
+}
+
+// IsComplete returns true if the download has completed. If an error occurred
+// during the download, it can be returned via Err.
+func (c *Response) IsComplete() bool {
+	select {
+	case <-c.Done:
+		return true
+	default:
+		return false
+	}
 }
 
 // Cancel cancels the file transfer by cancelling the underlying Context for
@@ -103,41 +120,41 @@ func (c *Response) Wait() {
 }
 
 // Err blocks the calling goroutine until the underlying file transfer is
-// completed and returns any error that may have occurred or nil. If the
-// transfer is already completed, Err returns immediately.
+// completed and returns any error that may have occurred. If the download is
+// already completed, Err returns immediately.
 func (c *Response) Err() error {
 	<-c.Done
 	return c.err
 }
 
-// IsComplete indicates whether the Response transfer context has completed. If
-// the transfer failed, IsComplete will return true and Response.Error will be
-// non-nil.
-func (c *Response) IsComplete() bool {
-	select {
-	case <-c.Done:
-		return true
-	default:
-		return false
-	}
-}
-
-// BytesTransferred returns the total number of bytes which have been copied to
+// BytesComplete returns the total number of bytes which have been copied to
 // the destination, including any bytes that were resumed from a previous
 // download.
-func (c *Response) BytesTransferred() int64 {
-	return atomic.LoadInt64(&c.bytesTransferred)
+func (c *Response) BytesComplete() int64 {
+	return c.bytesResumed + atomic.LoadInt64(&c.bytesTransferred)
 }
 
-// Progress returns the ratio of bytes which have already been copied to the
-// total file size. Multiply the returned value by 100 to return the percentage
-// completed.
+// BytesPerSecond returns the number of bytes transferred in the last second. If
+// the download is already complete, the average bytes/sec for the life of the
+// download is returned.
+func (c *Response) BytesPerSecond() float64 {
+	if c.IsComplete() {
+		return float64(c.bytesTransferred) / c.Duration().Seconds()
+	}
+
+	c.bytesPerSecondMu.Lock()
+	defer c.bytesPerSecondMu.Unlock()
+	return c.bytesPerSecond
+}
+
+// Progress returns the ratio of total bytes that have been downloaded. Multiply
+// the returned value by 100 to return the percentage completed.
 func (c *Response) Progress() float64 {
 	if c.Size == 0 {
 		return 0
 	}
 
-	return float64(c.BytesTransferred()) / float64(c.Size)
+	return float64(c.BytesComplete()) / float64(c.Size)
 }
 
 // Duration returns the duration of a file transfer. If the transfer is in
@@ -152,30 +169,24 @@ func (c *Response) Duration() time.Duration {
 	return time.Now().Sub(c.Start)
 }
 
-// ETA returns the estimated time at which the the download will complete. If
-// the transfer has already complete, the actual end time will be returned.
+// ETA returns the estimated time at which the the download will complete, given
+// the current BytesPerSecond. If the transfer has already completed, the actual
+// end time will be returned.
 func (c *Response) ETA() time.Time {
 	if c.IsComplete() {
 		return c.End
 	}
 
 	// compute seconds remaining
-	transferred := c.BytesTransferred() - c.bytesResumed
-	if transferred <= 0 {
+	bt := c.BytesComplete()
+	bps := c.BytesPerSecond()
+	if bps == 0 {
 		return time.Time{}
 	}
-	remainder := c.Size - c.BytesTransferred()
-	duration := time.Now().Sub(c.Start)
-	bps := float64(transferred) / duration.Seconds()
-	secs := float64(remainder) / bps
+	rem := c.Size - bt
+	secs := float64(rem) / bps
 
 	return time.Now().Add(time.Duration(secs) * time.Second)
-}
-
-// AverageBytesPerSecond returns the average bytes transferred per second over
-// the duration of the file transfer.
-func (c *Response) AverageBytesPerSecond() float64 {
-	return float64(c.BytesTransferred()-c.bytesResumed) / c.Duration().Seconds()
 }
 
 // setFileInfo sets Response.fi for the given Response.Filename. nil is set if
@@ -186,7 +197,6 @@ func (c *Response) setFileInfo() error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-
 		return err
 	}
 
@@ -194,7 +204,6 @@ func (c *Response) setFileInfo() error {
 		c.Filename = ""
 		return nil
 	}
-
 	c.fi = fi
 
 	return nil
@@ -206,7 +215,7 @@ func (c *Response) setFileInfo() error {
 // expected for the associated Request.
 func (c *Response) readResponse(resp *http.Response) error {
 	c.HTTPResponse = resp
-	c.Size = c.bytesTransferred + resp.ContentLength
+	c.Size = c.bytesResumed + resp.ContentLength
 	if resp.Header.Get("Accept-Ranges") == "bytes" {
 		c.CanResume = true
 	}
@@ -280,7 +289,6 @@ func (c *Response) checkExisting() (bool, error) {
 	if size == c.fi.Size() {
 		c.DidResume = true
 		c.bytesResumed = c.fi.Size()
-		c.bytesTransferred = c.fi.Size()
 		if err := c.checksum(); err != nil {
 			return false, err
 		}
@@ -297,7 +305,6 @@ func (c *Response) checkExisting() (bool, error) {
 		c.Request.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", c.fi.Size()))
 		c.DidResume = true
 		c.bytesResumed = c.fi.Size()
-		c.bytesTransferred = c.fi.Size()
 		c.writeFlags = os.O_APPEND | os.O_WRONLY
 	}
 
@@ -363,6 +370,35 @@ func (c *Response) openWriter() error {
 	return nil
 }
 
+// watchBps watches the progress of a call to copy and maintains transfer
+// statistics.
+func (c *Response) watchBps() {
+	var prev int64
+	then := c.Start
+
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-c.Done:
+			return
+
+		case now := <-t.C:
+			d := now.Sub(then)
+			then = now
+
+			cur := atomic.LoadInt64(&c.bytesTransferred)
+			bs := cur - prev
+			prev = cur
+
+			c.bytesPerSecondMu.Lock()
+			c.bytesPerSecond = float64(bs) / d.Seconds()
+			c.bytesPerSecondMu.Unlock()
+		}
+	}
+}
+
 // copy transfers content for a HTTP connection established via Client.do()
 func (c *Response) copy() error {
 	if c.IsComplete() {
@@ -372,8 +408,9 @@ func (c *Response) copy() error {
 	if c.bufferSize < 1 {
 		c.bufferSize = 32 * 1024
 	}
-
 	buffer := make([]byte, c.bufferSize)
+
+	go c.watchBps()
 	for {
 		if err := isCanceled(c.ctx); err != nil {
 			return c.close(err)

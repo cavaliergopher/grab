@@ -207,3 +207,13 @@ func TestGet(t *testing.T) {
 
 	testComplete(t, resp)
 }
+
+func ExampleGet() {
+	// download a file to /tmp
+	resp, err := Get("/tmp", "https://storage.googleapis.com/golang/go1.8.1.src.tar.gz")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Download saved to", resp.Filename)
+}
