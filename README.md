@@ -9,23 +9,20 @@
 Grab is a Go package for downloading files from the internet with the following
 rad features:
 
-* Monitor download progress asynchronously
+* Monitor download progress concurrently
 * Auto-resume incomplete downloads
 * Guess filename from content header or URL path
 * Safely cancel downloads using context.Context
 * Validate downloads using checksums
-* Download batches of files asynchronously
-
-For a full walkthrough, see:
-http://cavaliercoder.com/blog/downloading-large-files-in-go.html
+* Download batches of files concurrently
 
 Requires Go v1.7+
 
 ## Older versions
 
-If you are using an older version of Go, or require previously broken versions
-of the Grab API, you can import older version of this package, thanks to
-gpkg.in. Please see all GitHub tags for available versions.
+If you are using an older version of Go, or require previous versions of the
+Grab API, you can import older version of this package, thanks to gpkg.in.
+Please see all GitHub tags for available versions.
 
 		$ go get gopkg.in/cavaliercoder/grab.v1
 
@@ -69,7 +66,7 @@ Loop:
 		select {
 		case <-t.C:
 			fmt.Printf("  transferred %v / %v bytes (%.2f%%)\n",
-				resp.BytesTransferred(),
+				resp.BytesCompleted(),
 				resp.Size,
 				100*resp.Progress())
 
