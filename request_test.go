@@ -13,7 +13,7 @@ func ExampleRequest_WithContext() {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// create downlaod request with context
+	// create download request with context
 	req, err := NewRequest("./", "https://storage.googleapis.com/golang/go1.8.1.src.tar.gz")
 	if err != nil {
 		panic(err)

@@ -35,6 +35,10 @@ type Request struct {
 	// will be naively skipped and ErrFileExists returned.
 	SkipExisting bool
 
+	// NoCreateDirectories specifies that any missing directories in the given
+	// Filename path should not be created if they do not already exist.
+	NoCreateDirectories bool
+
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and
 	// ErrBadLength returned.

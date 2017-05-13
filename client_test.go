@@ -356,3 +356,35 @@ func TestCancelContext(t *testing.T) {
 		}
 	}
 }
+
+// TestNestedDirectory tests that missing subdirectories are created.
+func TestNestedDirectory(t *testing.T) {
+	dir := "./.testNested/one/two/three"
+	filename := ".testNestedFile"
+	expect := dir + "/" + filename
+
+	t.Run("Create", func(t *testing.T) {
+		req, _ := NewRequest(expect, ts.URL+"/"+filename)
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			panic(err)
+		}
+		defer os.RemoveAll("./.testNested/")
+
+		if resp.Filename != expect {
+			t.Errorf("expected nested Request.Filename to be %v, got %v", expect, resp.Filename)
+		}
+	})
+
+	t.Run("No create", func(t *testing.T) {
+		req, _ := NewRequest(expect, ts.URL+"/"+filename)
+		req.NoCreateDirectories = true
+
+		resp := DefaultClient.Do(req)
+		err := resp.Err()
+		if !os.IsNotExist(err) {
+			t.Errorf("expected: %v, got: %v", os.ErrNotExist, err)
+		}
+	})
+
+}

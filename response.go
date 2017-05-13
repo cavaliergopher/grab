@@ -300,6 +300,29 @@ func (c *Response) checkExisting() (bool, error) {
 	return false, nil
 }
 
+// createDirectories creates all missing parent directories for the destination
+// Filename path.
+func (c *Response) createDirectories() error {
+	if c.Request.NoCreateDirectories {
+		return nil
+	}
+
+	dir := filepath.Dir(c.Filename)
+	if fi, err := os.Stat(dir); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("error checking destination directory: %v", err)
+		}
+
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("error creating destination directory: %v", err)
+		}
+	} else if !fi.IsDir() {
+		panic("destination path is not directory")
+	}
+
+	return nil
+}
+
 // openWriter opens the destination file for writing and seeks to the location
 // from whence the file transfer will resume.
 //
@@ -311,6 +334,10 @@ func (c *Response) openWriter() error {
 
 	if c.writeFlags == 0 {
 		panic("writeFlags not set")
+	}
+
+	if err := c.createDirectories(); err != nil {
+		return err
 	}
 
 	f, err := os.OpenFile(c.Filename, c.writeFlags, 0644)
