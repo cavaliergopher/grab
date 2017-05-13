@@ -210,7 +210,7 @@ func TestGet(t *testing.T) {
 
 func ExampleGet() {
 	// download a file to /tmp
-	resp, err := Get("/tmp", "https://storage.googleapis.com/golang/go1.8.1.src.tar.gz")
+	resp, err := Get("/tmp", "http://example.com/example.zip")
 	if err != nil {
 		panic(err)
 	}

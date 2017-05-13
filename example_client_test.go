@@ -7,7 +7,7 @@ import (
 
 func ExampleClient_Do() {
 	client := NewClient()
-	req, err := NewRequest("/tmp", "https://storage.googleapis.com/golang/go1.8.1.src.tar.gz")
+	req, err := NewRequest("/tmp", "http://example.com/example.zip")
 	if err != nil {
 		panic(err)
 	}
@@ -27,7 +27,7 @@ func ExampleClient_Do() {
 func ExampleClient_DoChannel() {
 	// create a request and a buffered response channel
 	reqch := make(chan *Request)
-	respch := make(chan *Response, 7)
+	respch := make(chan *Response, 10)
 
 	// start 4 workers
 	client := NewClient()
@@ -42,8 +42,8 @@ func ExampleClient_DoChannel() {
 
 	go func() {
 		// send requests
-		for i := 2; i <= 8; i++ {
-			url := fmt.Sprintf("https://storage.googleapis.com/golang/go1.%d.src.tar.gz", i)
+		for i := 0; i < 10; i++ {
+			url := fmt.Sprintf("http://example.com/example%d.zip", i+1)
 			req, err := NewRequest("/tmp", url)
 			if err != nil {
 				panic(err)
@@ -71,8 +71,8 @@ func ExampleClient_DoChannel() {
 func ExampleClient_DoBatch() {
 	// create multiple download requests
 	reqs := make([]*Request, 0)
-	for i := 2; i <= 8; i++ {
-		url := fmt.Sprintf("https://storage.googleapis.com/golang/go1.%d.src.tar.gz", i)
+	for i := 0; i < 10; i++ {
+		url := fmt.Sprintf("http://example.com/example%d.zip", i+1)
 		req, err := NewRequest("/tmp", url)
 		if err != nil {
 			panic(err)

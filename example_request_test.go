@@ -14,7 +14,7 @@ func ExampleRequest_WithContext() {
 	defer cancel()
 
 	// create download request with context
-	req, err := NewRequest("", "https://storage.googleapis.com/golang/go1.8.1.src.tar.gz")
+	req, err := NewRequest("", "http://example.com/example.zip")
 	if err != nil {
 		panic(err)
 	}
@@ -32,7 +32,7 @@ func ExampleRequest_WithContext() {
 
 func ExampleRequest_SetChecksum() {
 	// create download request
-	req, err := NewRequest("", "https://storage.googleapis.com/golang/go1.8.1.src.tar.gz")
+	req, err := NewRequest("", "http://example.com/example.zip")
 	if err != nil {
 		panic(err)
 	}

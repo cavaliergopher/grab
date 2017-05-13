@@ -1,29 +1,3 @@
-/*
-Package grab provides a HTTP client implementation specifically geared for
-downloading large files with progress feedback, pause and resume and checksum
-validation features.
-
-For a full walkthrough, see:
-http://cavaliercoder.com/blog/downloading-large-files-in-go.html
-
-Please log any issues at:
-https://github.com/cavaliercoder/grab/issues
-
-If the given destination path for a transfer request is a directory, the file
-transfer will be stored in that directory and the file's name will be determined
-using Content-Disposition headers in the server's response or from the last
-segment of the path of the URL.
-
-An empty destination string or "." means the transfer will be stored in the
-current working directory.
-
-If a destination file already exists, grab will assume it is a complete or
-partially complete download of the requested file. If the remote server supports
-resuming interrupted downloads, grab will resume downloading from the end of the
-partial file. If the server does not support resumed downloads, the file will be
-retransferred in its entirety. If the file is already complete, grab will return
-successfully.
-*/
 package grab
 
 import (

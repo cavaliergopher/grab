@@ -113,8 +113,7 @@ func (c *Response) Cancel() error {
 	return c.Err()
 }
 
-// Wait blocks until the underlying file transfer is completed. If the transfer
-// is already completed, Wait returns immediately.
+// Wait blocks until the download is completed.
 func (c *Response) Wait() {
 	<-c.Done
 }
