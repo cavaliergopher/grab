@@ -24,7 +24,7 @@ If you are using an older version of Go, or require previous versions of the
 Grab API, you can import older version of this package, thanks to gpkg.in.
 Please see all GitHub tags for available versions.
 
-		$ go get gopkg.in/cavaliercoder/grab.v1
+	$ go get gopkg.in/cavaliercoder/grab.v1
 
 
 ## Example

@@ -4,7 +4,7 @@ Package grab provides a HTTP download manager implementation.
 Get is the most simple way to download a file:
 
 	resp, err := grab.Get("/tmp", "http://example.com/example.zip")
-	...
+	// ...
 
 Get will download the given URL and save it to the given destination directory.
 The destination filename will be determined automatically by grab using
