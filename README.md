@@ -66,7 +66,7 @@ Loop:
 		select {
 		case <-t.C:
 			fmt.Printf("  transferred %v / %v bytes (%.2f%%)\n",
-				resp.BytesCompleted(),
+				resp.BytesComplete(),
 				resp.Size,
 				100*resp.Progress())
 
