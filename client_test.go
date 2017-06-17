@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"math/rand"
 	"os"
 	"strings"
 	"testing"
@@ -402,4 +403,29 @@ func TestNestedDirectory(t *testing.T) {
 			t.Errorf("expected: %v, got: %v", os.ErrNotExist, err)
 		}
 	})
+}
+
+// TestRemoteTime tests that the timestamp of the downloaded file can be set
+// according to the timestamp of the remote file.
+func TestRemoteTime(t *testing.T) {
+	filename := "./.testRemoteTime"
+	defer os.Remove(filename)
+
+	// random number between 0 and now
+	lastmod := rand.Int63n(time.Now().Unix())
+	u := fmt.Sprintf("%s?lastmod=%d", ts.URL, lastmod)
+	req, _ := NewRequest(filename, u)
+	req.RemoteTime = true
+	resp := DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
+		panic(err)
+	}
+	fi, err := os.Stat(resp.Filename)
+	if err != nil {
+		panic(err)
+	}
+
+	if fi.ModTime().Unix() != lastmod {
+		t.Errorf("expected %v, got %v", time.Unix(lastmod, 0), fi.ModTime())
+	}
 }

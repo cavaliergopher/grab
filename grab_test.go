@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -18,6 +19,8 @@ import (
 //
 // * filename=[string]	return a filename in the Content-Disposition header of
 //                      the response
+//
+// * lastmod=[unix]		  set the Last-Modified header
 //
 // * nohead						  disabled support for HEAD requests
 //
@@ -57,6 +60,17 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 	// set filename in headers (default no)?
 	if filenamep := r.URL.Query().Get("filename"); filenamep != "" {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment;filename=\"%s\"", filenamep))
+	}
+
+	// set Last-Modified header
+	if lastmodp := r.URL.Query().Get("lastmod"); lastmodp != "" {
+		lastmodi, err := strconv.ParseInt(lastmodp, 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		lastmodt := time.Unix(lastmodi, 0).UTC()
+		lastmod := lastmodt.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
+		w.Header().Set("Last-Modified", lastmod)
 	}
 
 	// sleep before responding?
@@ -191,6 +205,17 @@ func TestTestServer(t *testing.T) {
 		expect := "attachment;filename=\"test\""
 		if h := resp.Header.Get("Content-Disposition"); h != expect {
 			t.Fatalf("expected Content-Disposition header: %v, got %v", expect, h)
+		}
+	})
+
+	t.Run("lastmod", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", ts.URL+"?lastmod=123456789", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+
+		expect := "Thu, 29 Nov 1973 21:33:09 GMT"
+		if h := resp.Header.Get("Last-Modified"); h != expect {
+			t.Fatalf("expected Last-Modified header: %v, got %v", expect, h)
 		}
 	})
 }

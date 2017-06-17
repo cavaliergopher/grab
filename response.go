@@ -440,6 +440,26 @@ func (c *Response) copy() error {
 		}
 	}
 
+	// set timestamp
+	if c.Request.RemoteTime {
+		// https://tools.ietf.org/html/rfc7232#section-2.2
+		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Last-Modified
+		header := c.HTTPResponse.Header.Get("Last-Modified")
+		if header == "" {
+			return c.close(ErrNoTimestamp)
+		}
+
+		lastmod, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", header)
+		if err != nil {
+			return c.close(err)
+		}
+
+		if err := os.Chtimes(c.Filename, lastmod, lastmod); err != nil {
+			return c.close(err)
+		}
+	}
+
+	// validate checksum
 	if err := c.checksum(); err != nil {
 		return c.close(err)
 	}
