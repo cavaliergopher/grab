@@ -146,8 +146,9 @@ func TestChecksums(t *testing.T) {
 			defer os.Remove(filename)
 
 			b, _ := hex.DecodeString(tc.sum)
-			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", tc.size))
-			req.SetChecksum(tc.hash, b, true)
+			uri := ts.URL + fmt.Sprintf("?size=%d", tc.size)
+			opt := Checksum(tc.hash, b, true)
+			req, _ := NewRequest(filename, uri, opt)
 
 			resp := DefaultClient.Do(req)
 			if err := resp.Err(); err != nil {
@@ -183,9 +184,7 @@ func TestContentLength(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			req, _ := NewRequest(".testSize-mismatch-head", ts.URL+tc.URL)
-			req.Size = size
-
+			req, _ := NewRequest(".testSize-mismatch-head", ts.URL+tc.URL, ExpectSize(size))
 			resp := DefaultClient.Do(req)
 			defer os.Remove(resp.Filename)
 			err := resp.Err()
@@ -222,10 +221,12 @@ func TestAutoResume(t *testing.T) {
 	for i := 0; i < segs; i++ {
 		segsize := (i + 1) * (size / segs)
 		t.Run(fmt.Sprintf("Range %v: up to %v bytes", i+1, segsize), func(t *testing.T) {
-			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", segsize))
+			var opt RequestOption
 			if i == segs-1 {
-				req.SetChecksum(sha256.New(), sum, false)
+				opt = Checksum(sha256.New(), sum, false)
 			}
+			uri := ts.URL + fmt.Sprintf("?size=%d", segsize)
+			req, _ := NewRequest(filename, uri, opt)
 
 			resp := DefaultClient.Do(req)
 			if err := resp.Err(); err != nil {
@@ -249,8 +250,7 @@ func TestAutoResume(t *testing.T) {
 	})
 
 	t.Run("No resume", func(t *testing.T) {
-		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size+1))
-		req.NoResume = true
+		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size+1), Resume(ResumeIfComplete))
 		resp := DefaultClient.Do(req)
 		if err := resp.Err(); err != nil {
 			panic(err)
@@ -291,8 +291,8 @@ func TestSkipExisting(t *testing.T) {
 	}
 
 	// ensure checksum is performed on pre-existing file
-	req, _ = NewRequest(filename, ts.URL)
-	req.SetChecksum(sha256.New(), []byte{0x01, 0x02, 0x03, 0x04}, true)
+	opt := Checksum(sha256.New(), []byte{0x01, 0x02, 0x03, 0x04}, true)
+	req, _ = NewRequest(filename, ts.URL, opt)
 
 	resp = DefaultClient.Do(req)
 	if err := resp.Err(); err != ErrBadChecksum {
@@ -314,9 +314,10 @@ func TestBatch(t *testing.T) {
 		reqs := make([]*Request, tests)
 		for i := 0; i < len(reqs); i++ {
 			filename := fmt.Sprintf(".testBatch.%d", i+1)
-			reqs[i], _ = NewRequest(filename, ts.URL+fmt.Sprintf("/request_%d?size=%d&sleep=10", i, size))
-			reqs[i].Label = fmt.Sprintf("Test %d", i+1)
-			reqs[i].SetChecksum(sha256.New(), sumb, false)
+			uri := ts.URL + fmt.Sprintf("/request_%d?size=%d&sleep=10", i, size)
+			chksum := Checksum(sha256.New(), sumb, false)
+			lbl := Label("Test %d", i+1)
+			reqs[i], _ = NewRequest(filename, uri, chksum, lbl)
 		}
 
 		// batch run
@@ -357,8 +358,8 @@ func TestCancelContext(t *testing.T) {
 
 	reqs := make([]*Request, tests)
 	for i := 0; i < tests; i++ {
-		req, _ := NewRequest("", fmt.Sprintf("%s/.testCancelContext%d?size=134217728", ts.URL, i))
-		reqs[i] = req.WithContext(ctx)
+		req, _ := NewRequest("", fmt.Sprintf("%s/.testCancelContext%d?size=134217728", ts.URL, i), Context(ctx))
+		reqs[i] = req
 	}
 
 	respch := client.DoBatch(8, reqs...)
@@ -394,9 +395,7 @@ func TestNestedDirectory(t *testing.T) {
 	})
 
 	t.Run("No create", func(t *testing.T) {
-		req, _ := NewRequest(expect, ts.URL+"/"+filename)
-		req.NoCreateDirectories = true
-
+		req, _ := NewRequest(expect, ts.URL+"/"+filename, CreateDirectories(false))
 		resp := DefaultClient.Do(req)
 		err := resp.Err()
 		if !os.IsNotExist(err) {
@@ -414,8 +413,7 @@ func TestRemoteTime(t *testing.T) {
 	// random number between 0 and now
 	lastmod := rand.Int63n(time.Now().Unix())
 	u := fmt.Sprintf("%s?lastmod=%d", ts.URL, lastmod)
-	req, _ := NewRequest(filename, u)
-	req.RemoteTime = true
+	req, _ := NewRequest(filename, u, UseRemoteTime())
 	resp := DefaultClient.Do(req)
 	if err := resp.Err(); err != nil {
 		panic(err)

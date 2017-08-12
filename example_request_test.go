@@ -14,11 +14,10 @@ func ExampleRequest_WithContext() {
 	defer cancel()
 
 	// create download request with context
-	req, err := NewRequest("", "http://example.com/example.zip")
+	req, err := NewRequest("", "http://example.com/example.zip", Context(ctx))
 	if err != nil {
 		panic(err)
 	}
-	req = req.WithContext(ctx)
 
 	// send download request
 	resp := DefaultClient.Do(req)
@@ -31,18 +30,18 @@ func ExampleRequest_WithContext() {
 }
 
 func ExampleRequest_SetChecksum() {
-	// create download request
-	req, err := NewRequest("", "http://example.com/example.zip")
-	if err != nil {
-		panic(err)
-	}
-
 	// set request checksum
 	sum, err := hex.DecodeString("33daf4c03f86120fdfdc66bddf6bfff4661c7ca11c5da473e537f4d69b470e57")
 	if err != nil {
 		panic(err)
 	}
-	req.SetChecksum(sha256.New(), sum, true)
+	chksum := Checksum(sha256.New(), sum, true)
+
+	// create download request
+	req, err := NewRequest("", "http://example.com/example.zip", chksum)
+	if err != nil {
+		panic(err)
+	}
 
 	// download and validate file
 	resp := DefaultClient.Do(req)

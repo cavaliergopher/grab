@@ -86,9 +86,6 @@ type Response struct {
 	bytesPerSecond   float64
 	bytesPerSecondMu sync.Mutex
 
-	// bufferSize specifies the size in bytes of the transfer buffer.
-	bufferSize int
-
 	// Error contains any error that may have occurred during the file transfer.
 	// This should not be read until IsComplete returns true.
 	err error
@@ -221,7 +218,7 @@ func (c *Response) readResponse(resp *http.Response) error {
 
 	// check expected size
 	if resp.ContentLength > 0 {
-		if c.Request.Size > 0 && c.Request.Size != c.Size {
+		if c.Request.size > 0 && c.Request.size != c.Size {
 			return ErrBadLength
 		}
 		if c.fi != nil && c.fi.Size() > c.Size {
@@ -261,12 +258,12 @@ func (c *Response) checkExisting() (bool, error) {
 		return false, nil
 	}
 
-	if c.Request.SkipExisting {
+	if c.Request.noModify {
 		return true, ErrFileExists
 	}
 
 	// determine expected file size
-	size := c.Request.Size
+	size := c.Request.size
 	if size == 0 && c.HTTPResponse != nil {
 		// This line assumes that the Content-Length header in the HTTPResponse
 		// returns the full file size, not a subrange. This means the response must
@@ -295,7 +292,7 @@ func (c *Response) checkExisting() (bool, error) {
 		return true, nil
 	}
 
-	if c.Request.NoResume {
+	if !c.Request.resume.ifSupported() {
 		return false, nil
 	}
 
@@ -313,7 +310,7 @@ func (c *Response) checkExisting() (bool, error) {
 // createDirectories creates all missing parent directories for the destination
 // Filename path.
 func (c *Response) createDirectories() error {
-	if c.Request.NoCreateDirectories {
+	if !c.Request.createDirectories {
 		return nil
 	}
 
@@ -404,10 +401,7 @@ func (c *Response) copy() error {
 		return c.err
 	}
 
-	if c.bufferSize < 1 {
-		c.bufferSize = 32 * 1024
-	}
-	buffer := make([]byte, c.bufferSize)
+	buffer := make([]byte, c.Request.bufferSize)
 
 	go c.watchBps()
 	for {
@@ -441,7 +435,7 @@ func (c *Response) copy() error {
 	}
 
 	// set timestamp
-	if c.Request.RemoteTime {
+	if c.Request.remoteTime {
 		// https://tools.ietf.org/html/rfc7232#section-2.2
 		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Last-Modified
 		header := c.HTTPResponse.Header.Get("Last-Modified")

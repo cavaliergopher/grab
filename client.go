@@ -135,7 +135,6 @@ func (c *Client) do(req *Request) (resp *Response) {
 		Filename:   req.Filename,
 		ctx:        ctx,
 		cancel:     cancel,
-		bufferSize: req.BufferSize,
 		writeFlags: os.O_CREATE | os.O_WRONLY,
 	}
 
@@ -153,7 +152,7 @@ func (c *Client) do(req *Request) (resp *Response) {
 
 	// check for resume support or find the name of an unknown file by sending
 	// a HEAD request
-	if !req.NoResume && (resp.fi != nil || resp.Filename == "") {
+	if req.resume.ifSupported() && (resp.fi != nil || resp.Filename == "") {
 		hreq := new(http.Request)
 		*hreq = *req.HTTPRequest
 		hreq.Method = "HEAD"
