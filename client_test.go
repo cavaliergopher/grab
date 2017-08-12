@@ -415,7 +415,6 @@ func TestRemoteTime(t *testing.T) {
 	lastmod := rand.Int63n(time.Now().Unix())
 	u := fmt.Sprintf("%s?lastmod=%d", ts.URL, lastmod)
 	req, _ := NewRequest(filename, u)
-	req.RemoteTime = true
 	resp := DefaultClient.Do(req)
 	if err := resp.Err(); err != nil {
 		panic(err)
@@ -424,7 +423,6 @@ func TestRemoteTime(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-
 	if fi.ModTime().Unix() != lastmod {
 		t.Errorf("expected %v, got %v", time.Unix(lastmod, 0), fi.ModTime())
 	}

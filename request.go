@@ -45,9 +45,9 @@ type Request struct {
 	// exist.
 	NoCreateDirectories bool
 
-	// RemoteTime specifies that grab should try to determine the timestamp of the
-	// remote file and apply it to the local copy.
-	RemoteTime bool
+	// IgnoreRemoteTime specifies that grab should not attempt to set the
+	// timestamp of the local file to match the remote file.
+	IgnoreRemoteTime bool
 
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and

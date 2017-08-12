@@ -441,20 +441,8 @@ func (c *Response) copy() error {
 	}
 
 	// set timestamp
-	if c.Request.RemoteTime {
-		// https://tools.ietf.org/html/rfc7232#section-2.2
-		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Last-Modified
-		header := c.HTTPResponse.Header.Get("Last-Modified")
-		if header == "" {
-			return c.close(ErrNoTimestamp)
-		}
-
-		lastmod, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", header)
-		if err != nil {
-			return c.close(err)
-		}
-
-		if err := os.Chtimes(c.Filename, lastmod, lastmod); err != nil {
+	if !c.Request.IgnoreRemoteTime {
+		if err := setLocalTimestamp(c.HTTPResponse, c.Filename); err != nil {
 			return c.close(err)
 		}
 	}
@@ -465,6 +453,23 @@ func (c *Response) copy() error {
 	}
 
 	return c.close(nil)
+}
+
+func setLocalTimestamp(resp *http.Response, filename string) error {
+	// https://tools.ietf.org/html/rfc7232#section-2.2
+	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Last-Modified
+	header := resp.Header.Get("Last-Modified")
+	if header == "" {
+		return nil
+	}
+	lastmod, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", header)
+	if err != nil {
+		return nil
+	}
+	if err := os.Chtimes(filename, lastmod, lastmod); err != nil {
+		return err
+	}
+	return nil
 }
 
 // checksum validates a completed file transfer.
