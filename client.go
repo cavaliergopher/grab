@@ -187,6 +187,13 @@ func (c *Client) doHTTPRequest(hreq *http.Request, resp *Response) (bool, error)
 		hreq.Header.Set("User-Agent", c.UserAgent)
 	}
 
+	// TODO: set If-Modified-Since header
+	// https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.25
+	// if resp.fi != nil {
+	// 	since := resp.fi.ModTime().Format(http.TimeFormat)
+	// 	hreq.Header.Set("If-Modified-Since", since)
+	// }
+
 	hresp, err := c.HTTPClient.Do(hreq)
 	if err != nil {
 		return false, err

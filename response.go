@@ -254,8 +254,6 @@ func (c *Response) readResponse(resp *http.Response) error {
 //
 // If a checksum has been requested, it will be executed on the existing file
 // and an error returned if it fails validation.
-//
-// TODO: check timestamps and/or E-Tags
 func (c *Response) checkExisting() (bool, error) {
 	if c.fi == nil {
 		return false, nil
@@ -263,6 +261,16 @@ func (c *Response) checkExisting() (bool, error) {
 
 	if c.Request.SkipExisting {
 		return true, ErrFileExists
+	}
+
+	// compare last-modified timestamp
+	// BUG: resumed downloads always compute the local partial to be most recent
+	if c.HTTPResponse != nil {
+		// discard error as zero-time is never greater than fi.ModTime
+		lastmod, _ := http.ParseTime(c.HTTPResponse.Header.Get("Last-Modified"))
+		if lastmod.Unix() > c.fi.ModTime().Unix() {
+			return false, nil
+		}
 	}
 
 	// determine expected file size
@@ -441,7 +449,7 @@ func (c *Response) copy() error {
 	}
 
 	// set timestamp
-	if !c.Request.IgnoreRemoteTime {
+	if !c.Request.NoSetLocalModTime {
 		if err := setLocalTimestamp(c.HTTPResponse, c.Filename); err != nil {
 			return c.close(err)
 		}

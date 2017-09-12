@@ -15,7 +15,7 @@ func isCanceled(ctx context.Context) error {
 	}
 }
 
-// copyBuffer behaves similarly to io.CopyBuffer except that is checks for
+// copyBuffer behaves similarly to io.CopyBuffer except that it checks for
 // cancelation of the given context.Context.
 func copyBuffer(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) (written int64, err error) {
 	if buf == nil {

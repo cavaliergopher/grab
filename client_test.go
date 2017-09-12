@@ -427,3 +427,44 @@ func TestRemoteTime(t *testing.T) {
 		t.Errorf("expected %v, got %v", time.Unix(lastmod, 0), fi.ModTime())
 	}
 }
+
+// TestTimeModified
+func TestLastModified(t *testing.T) {
+	filename := "./.testLastModified"
+	defer os.Remove(filename)
+
+	oldURL := fmt.Sprintf("%s?lastmod=%d", ts.URL, time.Now().Add(-24*time.Hour).Unix())
+	newURL := fmt.Sprintf("%s?lastmod=%d", ts.URL, time.Now().Unix())
+
+	// download initial file
+	if _, err := Get(filename, oldURL); err != nil {
+		panic(err)
+	}
+
+	// skip unmodifed remote file
+	resp, err := Get(filename, oldURL)
+	if err != nil {
+		panic(err)
+	}
+	if !resp.DidResume || resp.bytesResumed < 1 {
+		t.Errorf("expected client to skip unmodified file")
+	}
+
+	// download modified remote file
+	resp, err = Get(filename, newURL)
+	if err != nil {
+		panic(err)
+	}
+	if resp.DidResume || resp.bytesResumed != 0 {
+		t.Errorf("expected client to download modified file")
+	}
+
+	// skip unmodifed remote file
+	resp, err = Get(filename, oldURL)
+	if err != nil {
+		panic(err)
+	}
+	if !resp.DidResume || resp.bytesResumed < 1 {
+		t.Errorf("expected client to skip unmodified file")
+	}
+}
