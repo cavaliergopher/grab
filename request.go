@@ -45,9 +45,10 @@ type Request struct {
 	// exist.
 	NoCreateDirectories bool
 
-	// IgnoreRemoteTime specifies that grab should not attempt to set the
-	// timestamp of the local file to match the remote file.
-	IgnoreRemoteTime bool
+	// NoSetLocalModTime specifies that grab should not attempt to set the
+	// timestamp of the local file to match the remote file. The operating system
+	// will instead set the timestamp to the current system time.
+	NoSetLocalModTime bool
 
 	// Size specifies the expected size of the file transfer if known. If the
 	// server response size does not match, the transfer is cancelled and

@@ -69,7 +69,7 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 			panic(err)
 		}
 		lastmodt := time.Unix(lastmodi, 0).UTC()
-		lastmod := lastmodt.Format("Mon, 02 Jan 2006 15:04:05") + " GMT"
+		lastmod := lastmodt.Format(http.TimeFormat)
 		w.Header().Set("Last-Modified", lastmod)
 	}
 
