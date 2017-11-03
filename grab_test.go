@@ -233,6 +233,48 @@ func TestGet(t *testing.T) {
 	testComplete(t, resp)
 }
 
+func TestOverwriteDifferentFile(t *testing.T) {
+	filename := ".testGet"
+	defer os.Remove(filename)
+
+	resp, err := Get(filename, ts.URL)
+	if err != nil {
+		t.Fatalf("error in Get(): %v", err)
+	}
+
+	testComplete(t, resp)
+
+	filename2 := ".testGet2"
+	defer os.Remove(filename2)
+
+	data := []byte("x")
+	err = ioutil.WriteFile(filename2, data, 0644)
+	if err != nil {
+		t.Fatalf("error in WriteFile: %v", err)
+	}
+
+	resp, err = Get(filename2, ts.URL)
+	if err != nil {
+		t.Fatalf("error in Get(): %v", err)
+	}
+
+	testComplete(t, resp)
+
+	content, err := ioutil.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("error in ReadFile(): %v", err)
+	}
+
+	content2, err := ioutil.ReadFile(filename2)
+	if err != nil {
+		t.Fatalf("error in ReadFile(): %v", err)
+	}
+
+	if content[0] != content2[0] {
+		t.Fatalf("download contents differ")
+	}
+}
+
 func ExampleGet() {
 	// download a file to /tmp
 	resp, err := Get("/tmp", "http://example.com/example.zip")
