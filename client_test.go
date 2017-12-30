@@ -187,12 +187,11 @@ func TestAutoResume(t *testing.T) {
 
 	for i := 0; i < segs; i++ {
 		segsize := (i + 1) * (size / segs)
-		t.Run(fmt.Sprintf("Range %v: up to %v bytes", i+1, segsize), func(t *testing.T) {
+		t.Run(fmt.Sprintf("With%vBytes", i+1, segsize), func(t *testing.T) {
 			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", segsize))
 			if i == segs-1 {
 				req.SetChecksum(sha256.New(), sum, false)
 			}
-
 			resp := DefaultClient.Do(req)
 			if err := resp.Err(); err != nil {
 				t.Errorf("error: %v", err)
@@ -205,7 +204,7 @@ func TestAutoResume(t *testing.T) {
 		})
 	}
 
-	t.Run("Failure", func(t *testing.T) {
+	t.Run("WithFailure", func(t *testing.T) {
 		// request smaller segment
 		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size-1))
 		resp := DefaultClient.Do(req)
@@ -214,21 +213,31 @@ func TestAutoResume(t *testing.T) {
 		}
 	})
 
-	t.Run("No resume", func(t *testing.T) {
+	t.Run("WithNoResume", func(t *testing.T) {
 		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size+1))
 		req.NoResume = true
 		resp := DefaultClient.Do(req)
 		if err := resp.Err(); err != nil {
 			panic(err)
 		}
-
 		if resp.DidResume == true {
 			t.Errorf("expected Response.DidResume to be false")
 		}
-
 		testComplete(t, resp)
 	})
 
+	t.Run("WithNoResumeAndTruncate", func(t *testing.T) {
+		req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", size-1))
+		req.NoResume = true
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			t.Errorf("error in response: %v", err)
+		}
+		if resp.DidResume == true {
+			t.Errorf("expected Response.DidResume to be false")
+		}
+		testComplete(t, resp)
+	})
 	// TODO: test when existing file is corrupted
 }
 

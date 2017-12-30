@@ -232,9 +232,6 @@ func (c *Response) readResponse(resp *http.Response) error {
 		if c.Request.Size > 0 && c.Request.Size != c.Size {
 			return ErrBadLength
 		}
-		if c.fi != nil && c.fi.Size() > c.Size {
-			return ErrBadLength
-		}
 	}
 
 	// check filename
@@ -289,22 +286,22 @@ func (c *Response) checkExisting() (bool, error) {
 		return false, nil
 	}
 
-	if size < c.fi.Size() {
-		return false, ErrBadLength
-	}
-
 	if size == c.fi.Size() {
 		c.DidResume = true
 		c.bytesResumed = c.fi.Size()
 		if err := c.checksum(); err != nil {
 			return false, err
 		}
-
 		return true, nil
 	}
 
 	if c.Request.NoResume {
+		c.writeFlags = os.O_TRUNC | os.O_WRONLY
 		return false, nil
+	}
+
+	if size < c.fi.Size() {
+		return false, ErrBadLength
 	}
 
 	// prepare for resuming a partial completed download
