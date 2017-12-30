@@ -7,6 +7,11 @@ import (
 	"net/url"
 )
 
+// A Hook is a user provided function that can be called by grab at various
+// stages of a requests lifecycle. If a hook returns an error, the associated
+// request is cancelled and the same error is returned on the Response object.
+type Hook func(*Response) error
+
 // A Request represents an HTTP file transfer request to be sent by a Client.
 type Request struct {
 	// Label is an arbitrary string which may used to label a Request with a
@@ -64,6 +69,11 @@ type Request struct {
 	// throughput but will use more memory and result in less frequent updates
 	// to the transfer progress statistics. Default: 32KB.
 	BufferSize int
+
+	// BeforeCopy is a user provided function that is called immediately before
+	// a request starts downloading. If BeforeCopy returns an error, the request
+	// is cancelled and the same error is returned on the Response object.
+	BeforeCopy Hook
 
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash

@@ -412,6 +412,13 @@ func (c *Response) copy() error {
 		return c.err
 	}
 
+	// run BeforeCopy hook
+	if c.Request.BeforeCopy != nil {
+		if err := c.Request.BeforeCopy(c); err != nil {
+			return c.close(err)
+		}
+	}
+
 	if c.bufferSize < 1 {
 		c.bufferSize = 32 * 1024
 	}

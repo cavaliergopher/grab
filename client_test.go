@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"math/rand"
@@ -15,41 +16,6 @@ import (
 	"testing"
 	"time"
 )
-
-// testComplete validates that a completed Response has all the desired fields.
-func testComplete(t *testing.T, resp *Response) {
-	<-resp.Done
-	if !resp.IsComplete() {
-		t.Errorf("Response.IsComplete returned false")
-	}
-
-	if resp.Start.IsZero() {
-		t.Errorf("Response.Start is zero")
-	}
-
-	if resp.End.IsZero() {
-		t.Error("Response.End is zero")
-	}
-
-	if eta := resp.ETA(); eta != resp.End {
-		t.Errorf("Response.ETA is not equal to Response.End: %v", eta)
-	}
-
-	// the following fields should only be set if no error occurred
-	if resp.Err() == nil {
-		if resp.Filename == "" {
-			t.Errorf("Response.Filename is empty")
-		}
-
-		if resp.Size == 0 {
-			t.Error("Response.Size is zero")
-		}
-
-		if p := resp.Progress(); p != 1.00 {
-			t.Errorf("Response.Progress returned %v (%v/%v bytes), expected 1", p, resp.BytesComplete(), resp.Size)
-		}
-	}
-}
 
 // TestFilenameResolutions tests that the destination filename for Requests can
 // be determined correctly, using an explicitly requested path,
@@ -448,5 +414,45 @@ func TestResponseCode(t *testing.T) {
 		if err := resp.Err(); err != nil {
 			t.Errorf("expected nil, got '%v'", err)
 		}
+	})
+}
+
+func TestBeforeCopyHook(t *testing.T) {
+	filename := "./.testBeforeCopy"
+	t.Run("Noop", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		req, _ := NewRequest(filename, ts.URL)
+		req.BeforeCopy = func(resp *Response) error {
+			if resp.IsComplete() {
+				t.Errorf("Response object passed to BeforeCopy hook has already been closed")
+			}
+			return nil
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			t.Errorf("unexpected error using BeforeCopy hook: %v", err)
+		}
+		testComplete(t, resp)
+	})
+
+	t.Run("WithError", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		testError := errors.New("test")
+		req, _ := NewRequest(filename, ts.URL)
+		req.BeforeCopy = func(resp *Response) error {
+			if resp.IsComplete() {
+				t.Errorf("Response object passed to BeforeCopy hook has already been closed")
+			}
+			return testError
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != testError {
+			t.Errorf("expected error '%v', got '%v'", testError, err)
+		}
+		if resp.BytesComplete() != 0 {
+			t.Errorf("expected 0 bytes completed for cancelled BeforeCopy hook, got %d",
+				resp.BytesComplete())
+		}
+		testComplete(t, resp)
 	})
 }
