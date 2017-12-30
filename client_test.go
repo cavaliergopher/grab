@@ -427,3 +427,26 @@ func TestRemoteTime(t *testing.T) {
 		t.Errorf("expected %v, got %v", time.Unix(lastmod, 0), fi.ModTime())
 	}
 }
+
+func TestResponseCode(t *testing.T) {
+	filename := "./.testResponseCode"
+
+	t.Run("With404", func(t *testing.T) {
+		defer os.Remove(filename)
+		req, _ := NewRequest(filename, ts.URL+"?status=404")
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != ErrBadStatusCode {
+			t.Errorf("expected error '%v', got '%v'", ErrBadStatusCode, err)
+		}
+	})
+
+	t.Run("WithIgnoreNon2XX", func(t *testing.T) {
+		defer os.Remove(filename)
+		req, _ := NewRequest(filename, ts.URL+"?status=404")
+		req.IgnoreBadStatusCodes = true
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			t.Errorf("expected nil, got '%v'", err)
+		}
+	})
+}

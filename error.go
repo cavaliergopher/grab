@@ -3,6 +3,10 @@ package grab
 import "errors"
 
 var (
+	// ErrBadStatusCode indicates that the server response had a status code that
+	// was not in the 200-299 range.
+	ErrBadStatusCode = errors.New("server returned a non-2XX status code")
+
 	// ErrBadLength indicates that the server response or an existing file does
 	// not match the expected content length.
 	ErrBadLength = errors.New("bad content length")

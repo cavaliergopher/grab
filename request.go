@@ -45,6 +45,11 @@ type Request struct {
 	// exist.
 	NoCreateDirectories bool
 
+	// IgnoreBadStatusCodes specifies that grab should accept any status code in
+	// the response from the remote server. Otherwise, grab expects the response
+	// status code to be within the 2XX range.
+	IgnoreBadStatusCodes bool
+
 	// IgnoreRemoteTime specifies that grab should not attempt to set the
 	// timestamp of the local file to match the remote file.
 	IgnoreRemoteTime bool

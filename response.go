@@ -214,6 +214,14 @@ func (c *Response) setFileInfo() error {
 // expected for the associated Request.
 func (c *Response) readResponse(resp *http.Response) error {
 	c.HTTPResponse = resp
+
+	// check status code
+	if !c.Request.IgnoreBadStatusCodes {
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return ErrBadStatusCode
+		}
+	}
+
 	c.Size = c.bytesResumed + resp.ContentLength
 	if resp.Header.Get("Accept-Ranges") == "bytes" {
 		c.CanResume = true

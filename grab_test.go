@@ -34,7 +34,17 @@ import (
 // * sleep=[int]				delay the response by the given number of
 // 								      milliseconds (before sending headers)
 //
+// * status=[int]       return the given status code
+//
 var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// set status code
+	statusCode := http.StatusOK
+	if v := r.URL.Query().Get("status"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &statusCode); err != nil {
+			panic(err)
+		}
+	}
+
 	// allow HEAD requests?
 	if _, ok := r.URL.Query()["nohead"]; ok && r.Method == "HEAD" {
 		http.Error(w, "HEAD method not allowed", http.StatusMethodNotAllowed)
@@ -124,6 +134,7 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 	if ranged {
 		w.Header().Set("Accept-Ranges", "bytes")
 	}
+	w.WriteHeader(statusCode)
 
 	// serve content body if method == "GET"
 	if r.Method == "GET" {
