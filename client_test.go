@@ -40,7 +40,7 @@ func TestFilenameResolution(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.Remove(".test")
+	defer os.RemoveAll(".test")
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -69,7 +69,7 @@ func TestFilenameResolution(t *testing.T) {
 // TestChecksums checks that checksum validation behaves as expected for valid
 // and corrupted downloads.
 func TestChecksums(t *testing.T) {
-	testCases := []struct {
+	tests := []struct {
 		size  int
 		hash  hash.Hash
 		sum   string
@@ -101,28 +101,28 @@ func TestChecksums(t *testing.T) {
 		{1048576, sha512.New(), "ac1d097c4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", false},
 	}
 
-	for _, tc := range testCases {
+	for _, test := range tests {
 		comparison := "Match"
-		if !tc.match {
+		if !test.match {
 			comparison = "Mismatch"
 		}
 
-		t.Run(fmt.Sprintf("%s %s", comparison, tc.sum[:8]), func(t *testing.T) {
-			filename := fmt.Sprintf(".testChecksum-%s-%s", comparison, tc.sum[:8])
+		t.Run(fmt.Sprintf("With%s%s", comparison, test.sum[:8]), func(t *testing.T) {
+			filename := fmt.Sprintf(".testChecksum-%s-%s", comparison, test.sum[:8])
 			defer os.Remove(filename)
 
-			b, _ := hex.DecodeString(tc.sum)
-			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", tc.size))
-			req.SetChecksum(tc.hash, b, true)
+			b, _ := hex.DecodeString(test.sum)
+			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", test.size))
+			req.SetChecksum(test.hash, b, true)
 
 			resp := DefaultClient.Do(req)
 			if err := resp.Err(); err != nil {
 				if err != ErrBadChecksum {
 					panic(err)
-				} else if tc.match {
+				} else if test.match {
 					t.Errorf("error: %v", err)
 				}
-			} else if !tc.match {
+			} else if !test.match {
 				t.Errorf("expected: %v, got: %v", ErrBadChecksum, err)
 			}
 
@@ -187,7 +187,7 @@ func TestAutoResume(t *testing.T) {
 
 	for i := 0; i < segs; i++ {
 		segsize := (i + 1) * (size / segs)
-		t.Run(fmt.Sprintf("With%vBytes", i+1, segsize), func(t *testing.T) {
+		t.Run(fmt.Sprintf("With%vBytes", segsize), func(t *testing.T) {
 			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d", segsize))
 			if i == segs-1 {
 				req.SetChecksum(sha256.New(), sum, false)

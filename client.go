@@ -1,9 +1,12 @@
 package grab
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -21,6 +24,13 @@ type Client struct {
 	//
 	// The user agent string may be overridden in the headers of each request.
 	UserAgent string
+
+	// BufferSize specifies the size in bytes of the buffer that is used for
+	// transferring all requested files. Larger buffers may result in faster
+	// throughput but will use more memory and result in less frequent updates
+	// to the transfer progress statistics. The BufferSize of each request can
+	// be overridden on each Request object. Default: 32KB.
+	BufferSize int
 }
 
 // NewClient returns a new file download Client, using default configuration.
@@ -52,8 +62,23 @@ var DefaultClient = NewClient()
 // will block the caller until the transfer is completed, successfully or
 // otherwise.
 func (c *Client) Do(req *Request) *Response {
-	resp := c.do(req)
-	go resp.copy()
+	// cancel will be called on all code-paths via closeResponse
+	ctx, cancel := context.WithCancel(req.Context())
+	resp := &Response{
+		Request:    req,
+		Start:      time.Now(),
+		Done:       make(chan struct{}, 0),
+		Filename:   req.Filename,
+		ctx:        ctx,
+		cancel:     cancel,
+		bufferSize: req.BufferSize,
+		writeFlags: os.O_CREATE | os.O_WRONLY,
+	}
+	if resp.bufferSize == 0 {
+		resp.bufferSize = c.BufferSize
+	}
+	c.run(resp, c.statFileInfo)
+	go c.run(resp, c.copyFile)
 	return resp
 }
 
@@ -96,8 +121,6 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 	if workers < 1 {
 		workers = len(requests)
 	}
-
-	// start workers
 	reqch := make(chan *Request, len(requests))
 	respch := make(chan *Response, len(requests))
 	wg := sync.WaitGroup{}
@@ -118,87 +141,327 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 		wg.Wait()
 		close(respch)
 	}()
-
 	return respch
 }
 
-// do submits a HTTP request and returns a Response. It does not start
-// downloading the response content. This should be performed in a separate
-// goroutine by calling Response.copy.
-func (c *Client) do(req *Request) (resp *Response) {
-	// cancel will be called on all code-paths via resp.close
-	ctx, cancel := context.WithCancel(req.Context())
-	resp = &Response{
-		Request:    req,
-		Start:      time.Now(),
-		Done:       make(chan struct{}, 0),
-		Filename:   req.Filename,
-		ctx:        ctx,
-		cancel:     cancel,
-		bufferSize: req.BufferSize,
-		writeFlags: os.O_CREATE | os.O_WRONLY,
-	}
+// An stateFunc is an action that mutates the state of a Response and returns
+// the next stateFunc to be called.
+type stateFunc func(*Response) stateFunc
 
-	// get fileinfo for an existing file
-	if err := resp.setFileInfo(); err != nil {
-		resp.close(err)
-		return
-	}
+// run calls the given stateFunc function and all subsequent returned stateFuncs
+// until a stateFunc returns nil or the Response.ctx is canceled. Each stateFunc
+// should mutate the state of the given Response until it has completed
+// downloading or failed.
+func (c *Client) run(resp *Response, f stateFunc) {
+	for {
+		select {
+		case <-resp.ctx.Done():
+			if resp.IsComplete() {
+				return
+			}
+			resp.err = resp.ctx.Err()
+			f = c.closeResponse
 
-	// check if existing file is complete
-	if ok, err := resp.checkExisting(); ok || err != nil {
-		resp.close(err)
-		return
-	}
-
-	// check for resume support or find the name of an unknown file by sending
-	// a HEAD request
-	if !req.NoResume && (resp.fi != nil || resp.Filename == "") {
-		hreq := new(http.Request)
-		*hreq = *req.HTTPRequest
-		hreq.Method = "HEAD"
-		if ok, err := c.doHTTPRequest(hreq, resp); ok || err != nil {
-			resp.close(err)
+		default:
+			// keep working
+		}
+		if f = f(resp); f == nil {
 			return
 		}
 	}
-
-	// send GET request
-	if ok, err := c.doHTTPRequest(req.HTTPRequest, resp); ok || err != nil {
-		resp.close(err)
-		return
-	}
-
-	// open destination for writing
-	if err := resp.openWriter(); err != nil {
-		resp.close(err)
-		return
-	}
-
-	return
 }
 
-// doHTTPRequest sends a HTTP Request, processes the response and checks for
-// any existing file if the filename is now known.
+// statFileInfo retrieves FileInfo for any local file matching
+// Response.Filename.
 //
-// Returns true if the existing file is already completed.
-func (c *Client) doHTTPRequest(hreq *http.Request, resp *Response) (bool, error) {
-	if c.UserAgent != "" && hreq.Header.Get("User-Agent") == "" {
-		hreq.Header.Set("User-Agent", c.UserAgent)
+// If the file does not exist, is a directory, or its name is unknown the next
+// stateFunc is headRequest.
+//
+// If the file exists, Response.fi is set and the next stateFunc is
+// validateLocal.
+//
+// If an error occurs, the next stateFunc is closeResponse.
+func (c *Client) statFileInfo(resp *Response) stateFunc {
+	if resp.Filename == "" {
+		return c.headRequest
 	}
-
-	hresp, err := c.HTTPClient.Do(hreq)
+	fi, err := os.Stat(resp.Filename)
 	if err != nil {
-		return false, err
+		if os.IsNotExist(err) {
+			return c.headRequest
+		}
+		resp.err = err
+		return c.closeResponse
+	}
+	if fi.IsDir() {
+		resp.Filename = ""
+		return c.headRequest
+	}
+	resp.fi = fi
+	return c.validateLocal
+}
+
+// validateLocal compares a local copy of the downloaded file to the remote
+// file.
+//
+// An error is returned if the local file is larger than the remote file, or
+// Request.SkipExisting is true.
+//
+// If the existing file matches the length of the remote file, the next
+// stateFunc is checksumFile.
+//
+// If the local file is smaller than the remote file and the remote server is
+// known to support ranged requests, the next stateFunc is getRequest.
+func (c *Client) validateLocal(resp *Response) stateFunc {
+	if resp.Request.SkipExisting {
+		resp.err = ErrFileExists
+		return c.closeResponse
 	}
 
-	if err := resp.readResponse(hresp); err != nil {
-		return false, err
+	// determine expected file size
+	size := resp.Request.Size
+	if size == 0 && resp.HTTPResponse != nil {
+		size = resp.HTTPResponse.ContentLength
+	}
+	if size == 0 {
+		return c.headRequest
 	}
 
-	if !resp.DidResume {
-		return resp.checkExisting()
+	if size == resp.fi.Size() {
+		resp.DidResume = true
+		resp.bytesResumed = resp.fi.Size()
+		return c.checksumFile
 	}
 
-	return false, nil
+	if resp.Request.NoResume {
+		resp.writeFlags = os.O_TRUNC | os.O_WRONLY
+		return c.getRequest
+	}
+
+	if size < resp.fi.Size() {
+		resp.err = ErrBadLength
+		return c.closeResponse
+	}
+
+	if resp.CanResume {
+		resp.Request.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", resp.fi.Size()))
+		resp.DidResume = true
+		resp.bytesResumed = resp.fi.Size()
+		resp.writeFlags = os.O_APPEND | os.O_WRONLY
+		return c.getRequest
+	}
+	return c.headRequest
+}
+
+func (c *Client) checksumFile(resp *Response) stateFunc {
+	if resp.Request.hash == nil {
+		return c.closeResponse
+	}
+
+	if resp.Filename == "" {
+		panic("filename not set")
+	}
+
+	// open downloaded file
+	f, err := os.Open(resp.Filename)
+	if err != nil {
+		resp.err = err
+		return c.closeResponse
+	}
+	defer f.Close()
+
+	// hash file
+	t := newTransfer(resp.Request.Context(), resp.Request.hash, f, nil)
+	if nc, err := t.copy(); err != nil {
+		resp.err = err
+		return c.closeResponse
+	} else if nc != resp.Size {
+		resp.err = ErrBadLength
+		return c.closeResponse
+	}
+
+	// compare checksum
+	sum := resp.Request.hash.Sum(nil)
+	if !bytes.Equal(sum, resp.Request.checksum) {
+		if resp.Request.deleteOnError {
+			os.Remove(resp.Filename)
+		}
+		resp.err = ErrBadChecksum
+	}
+	return c.closeResponse
+}
+
+// doHTTPRequest sends a HTTP Request and returns the response
+func (c *Client) doHTTPRequest(req *http.Request) (*http.Response, error) {
+	if c.UserAgent != "" && req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	return c.HTTPClient.Do(req)
+}
+
+func (c *Client) headRequest(resp *Response) stateFunc {
+	if resp.optionsKnown {
+		return c.getRequest
+	}
+	resp.optionsKnown = true
+
+	if resp.Request.NoResume {
+		return c.getRequest
+	}
+
+	if resp.Filename != "" && resp.fi == nil {
+		// destination path is already known and does not exist
+		return c.getRequest
+	}
+
+	hreq := new(http.Request)
+	*hreq = *resp.Request.HTTPRequest
+	hreq.Method = "HEAD"
+
+	resp.HTTPResponse, resp.err = c.doHTTPRequest(hreq)
+	if resp.err != nil {
+		return c.closeResponse
+	}
+	return c.readResponse
+}
+
+func (c *Client) getRequest(resp *Response) stateFunc {
+	resp.HTTPResponse, resp.err = c.doHTTPRequest(resp.Request.HTTPRequest)
+	if resp.err != nil {
+		return c.closeResponse
+	}
+	return c.readResponse
+}
+
+func (c *Client) readResponse(resp *Response) stateFunc {
+	if resp.HTTPResponse == nil {
+		panic("Response.HTTPResponse is not ready")
+	}
+
+	// check status code
+	if !resp.Request.IgnoreBadStatusCodes {
+		if resp.HTTPResponse.StatusCode < 200 || resp.HTTPResponse.StatusCode > 299 {
+			resp.err = ErrBadStatusCode
+			return c.closeResponse
+		}
+	}
+
+	// check expected size
+	resp.Size = resp.bytesResumed + resp.HTTPResponse.ContentLength
+	if resp.HTTPResponse.ContentLength > 0 && resp.Request.Size > 0 {
+		if resp.Request.Size != resp.Size {
+			resp.err = ErrBadLength
+			return c.closeResponse
+		}
+	}
+
+	// check filename
+	if resp.Filename == "" {
+		filename, err := guessFilename(resp.HTTPResponse)
+		if err != nil {
+			resp.err = err
+			return c.closeResponse
+		}
+		// Request.Filename will be empty or a directory
+		resp.Filename = filepath.Join(resp.Request.Filename, filename)
+		return c.statFileInfo
+	}
+
+	if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
+		resp.CanResume = true
+	}
+
+	if resp.HTTPResponse.Request.Method == "HEAD" {
+		return c.statFileInfo
+	}
+	return c.openWriter
+}
+
+// openWriter opens the destination file for writing and seeks to the location
+// from whence the file transfer will resume.
+//
+// Requires that Response.Filename and Response.writeFlags already be set.
+func (c *Client) openWriter(resp *Response) stateFunc {
+	if !resp.Request.NoCreateDirectories {
+		resp.err = mkdirp(resp.Filename)
+		if resp.err != nil {
+			return c.closeResponse
+		}
+	}
+
+	f, err := os.OpenFile(resp.Filename, resp.writeFlags, 0644)
+	if err != nil {
+		resp.err = err
+		return c.closeResponse
+	}
+	resp.writer = f
+
+	// seek to start or end
+	whence := os.SEEK_SET
+	if resp.bytesResumed > 0 {
+		whence = os.SEEK_END
+	}
+	_, resp.err = f.Seek(0, whence)
+	if resp.err != nil {
+		return c.closeResponse
+	}
+
+	// next step is copyFile, but this will be called later in another goroutine
+	return nil
+}
+
+// copy transfers content for a HTTP connection established via Client.do()
+func (c *Client) copyFile(resp *Response) stateFunc {
+	if resp.IsComplete() {
+		return nil
+	}
+
+	// run BeforeCopy hook
+	if resp.Request.BeforeCopy != nil {
+		resp.err = resp.Request.BeforeCopy(resp)
+		if resp.err != nil {
+			return c.closeResponse
+		}
+	}
+
+	if resp.bufferSize < 1 {
+		resp.bufferSize = 32 * 1024
+	}
+	b := make([]byte, resp.bufferSize)
+	go resp.watchBps()
+	resp.transfer = newTransfer(resp.Request.Context(), resp.writer, resp.HTTPResponse.Body, b)
+	if _, resp.err = resp.transfer.copy(); resp.err != nil {
+		return c.closeResponse
+	}
+
+	// set timestamp
+	if !resp.Request.IgnoreRemoteTime {
+		if resp.err = setLastModified(resp.HTTPResponse, resp.Filename); resp.err != nil {
+			return c.closeResponse
+		}
+	}
+	return c.checksumFile
+}
+
+// close finalizes the Response
+func (c *Client) closeResponse(resp *Response) stateFunc {
+	if resp.IsComplete() {
+		panic("response already closed")
+	}
+
+	resp.fi = nil
+	if resp.writer != nil {
+		resp.writer.Close()
+		resp.writer = nil
+	}
+	if resp.HTTPResponse != nil && resp.HTTPResponse.Body != nil {
+		resp.HTTPResponse.Body.Close()
+	}
+
+	resp.End = time.Now()
+	close(resp.Done)
+	if resp.cancel != nil {
+		resp.cancel()
+	}
+	return nil
 }

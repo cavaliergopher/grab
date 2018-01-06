@@ -1,15 +1,11 @@
 package grab
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -57,7 +53,7 @@ type Response struct {
 	// errors. Errors are available via Response.Err
 	Done chan struct{}
 
-	// ctx is a Context that controls cancellation of an inprogress transfer
+	// ctx is a Context that controls cancelation of an inprogress transfer
 	ctx context.Context
 
 	// cancel is a cancel func that can be used to cancel the context of this
@@ -68,6 +64,10 @@ type Response struct {
 	// transfer started.
 	fi os.FileInfo
 
+	// optionsKnown indicates that a HEAD request has been completed and the
+	// capabilities of the remote server are known.
+	optionsKnown bool
+
 	// writer is the file handle used to write the downloaded file to local
 	// storage
 	writer     io.WriteCloser
@@ -77,9 +77,9 @@ type Response struct {
 	// transferred before this transfer began.
 	bytesResumed int64
 
-	// bytesTransferred specifies the total number of bytes that have been
-	// transferred for this transfer (not including any bytes resumed).
-	bytesTransferred int64
+	// transfer is responsible for copying data from the remote server to a local
+	// file, tracking progress and allowing for cancelation.
+	transfer *transfer
 
 	// bytesPerSecond specifies the number of bytes that have been transferred in
 	// the last 1-second window.
@@ -130,7 +130,7 @@ func (c *Response) Err() error {
 // the destination, including any bytes that were resumed from a previous
 // download.
 func (c *Response) BytesComplete() int64 {
-	return c.bytesResumed + atomic.LoadInt64(&c.bytesTransferred)
+	return c.bytesResumed + c.transfer.N()
 }
 
 // BytesPerSecond returns the number of bytes transferred in the last second. If
@@ -138,9 +138,8 @@ func (c *Response) BytesComplete() int64 {
 // download is returned.
 func (c *Response) BytesPerSecond() float64 {
 	if c.IsComplete() {
-		return float64(c.bytesTransferred) / c.Duration().Seconds()
+		return float64(c.transfer.N()) / c.Duration().Seconds()
 	}
-
 	c.bytesPerSecondMu.Lock()
 	defer c.bytesPerSecondMu.Unlock()
 	return c.bytesPerSecond
@@ -152,7 +151,6 @@ func (c *Response) Progress() float64 {
 	if c.Size == 0 {
 		return 0
 	}
-
 	return float64(c.BytesComplete()) / float64(c.Size)
 }
 
@@ -175,207 +173,16 @@ func (c *Response) ETA() time.Time {
 	if c.IsComplete() {
 		return c.End
 	}
-
-	// compute seconds remaining
 	bt := c.BytesComplete()
 	bps := c.BytesPerSecond()
 	if bps == 0 {
 		return time.Time{}
 	}
-	rem := c.Size - bt
-	secs := float64(rem) / bps
-
+	secs := float64(c.Size-bt) / bps
 	return time.Now().Add(time.Duration(secs) * time.Second)
 }
 
-// setFileInfo sets Response.fi for the given Response.Filename. nil is set if
-// the file does not exist or is a directory.
-func (c *Response) setFileInfo() error {
-	fi, err := os.Stat(c.Filename)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	if fi.IsDir() {
-		c.Filename = ""
-		return nil
-	}
-	c.fi = fi
-
-	return nil
-}
-
-// readResponse reads a http.Response and updates Response.HTTPResponse,
-// Response.Size, Response.Filename and Response.CanResume. An error is returned
-// if any information returned from the remote server mismatches what is
-// expected for the associated Request.
-func (c *Response) readResponse(resp *http.Response) error {
-	c.HTTPResponse = resp
-
-	// check status code
-	if !c.Request.IgnoreBadStatusCodes {
-		if resp.StatusCode < 200 || resp.StatusCode > 299 {
-			return ErrBadStatusCode
-		}
-	}
-
-	c.Size = c.bytesResumed + resp.ContentLength
-	if resp.Header.Get("Accept-Ranges") == "bytes" {
-		c.CanResume = true
-	}
-
-	// check expected size
-	if resp.ContentLength > 0 {
-		if c.Request.Size > 0 && c.Request.Size != c.Size {
-			return ErrBadLength
-		}
-	}
-
-	// check filename
-	if c.Filename == "" {
-		filename, err := guessFilename(resp)
-		if err != nil {
-			return err
-		}
-
-		// Request.Filename must be empty or a directory
-		c.Filename = filepath.Join(c.Request.Filename, filename)
-		if err := c.setFileInfo(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// checkExisting returns true if a file already exists for this request and is
-// 100% completed. The size of the file is checked against Request.Size if set,
-// or the Content-Length returned by the remote server.
-//
-// This function should not be called if resuming a previous download.
-//
-// If a checksum has been requested, it will be executed on the existing file
-// and an error returned if it fails validation.
-//
-// TODO: check timestamps and/or E-Tags
-func (c *Response) checkExisting() (bool, error) {
-	if c.fi == nil {
-		return false, nil
-	}
-
-	if c.Request.SkipExisting {
-		return true, ErrFileExists
-	}
-
-	// determine expected file size
-	size := c.Request.Size
-	if size == 0 && c.HTTPResponse != nil {
-		// This line assumes that the Content-Length header in the HTTPResponse
-		// returns the full file size, not a subrange. This means the response must
-		// not be a response to a GET request with the Range header set.
-		//
-		// If the response was for a ranged request, it means we are resuming a
-		// previous download and this function should not have been called.
-		size = c.HTTPResponse.ContentLength
-	}
-
-	if size == 0 {
-		return false, nil
-	}
-
-	if size == c.fi.Size() {
-		c.DidResume = true
-		c.bytesResumed = c.fi.Size()
-		if err := c.checksum(); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-
-	if c.Request.NoResume {
-		c.writeFlags = os.O_TRUNC | os.O_WRONLY
-		return false, nil
-	}
-
-	if size < c.fi.Size() {
-		return false, ErrBadLength
-	}
-
-	// prepare for resuming a partial completed download
-	if c.CanResume {
-		c.Request.HTTPRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-", c.fi.Size()))
-		c.DidResume = true
-		c.bytesResumed = c.fi.Size()
-		c.writeFlags = os.O_APPEND | os.O_WRONLY
-	}
-
-	return false, nil
-}
-
-// createDirectories creates all missing parent directories for the destination
-// Filename path.
-func (c *Response) createDirectories() error {
-	if c.Request.NoCreateDirectories {
-		return nil
-	}
-
-	dir := filepath.Dir(c.Filename)
-	if fi, err := os.Stat(dir); err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("error checking destination directory: %v", err)
-		}
-
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("error creating destination directory: %v", err)
-		}
-	} else if !fi.IsDir() {
-		panic("destination path is not directory")
-	}
-
-	return nil
-}
-
-// openWriter opens the destination file for writing and seeks to the location
-// from whence the file transfer will resume.
-//
-// Requires that Response.Filename and Response.writeFlags already be set.
-func (c *Response) openWriter() error {
-	if c.Filename == "" {
-		panic("filename not set")
-	}
-
-	if c.writeFlags == 0 {
-		panic("writeFlags not set")
-	}
-
-	if err := c.createDirectories(); err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(c.Filename, c.writeFlags, 0644)
-	if err != nil {
-		return err
-	}
-	c.writer = f
-
-	// seek to start or end
-	whence := os.SEEK_SET
-	if c.bytesResumed > 0 {
-		whence = os.SEEK_END
-	}
-
-	if _, err := f.Seek(0, whence); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// watchBps watches the progress of a call to copy and maintains transfer
-// statistics.
+// watchBps watches the progress of a transfer and maintains statistics.
 func (c *Response) watchBps() {
 	var prev int64
 	then := c.Start
@@ -392,7 +199,7 @@ func (c *Response) watchBps() {
 			d := now.Sub(then)
 			then = now
 
-			cur := atomic.LoadInt64(&c.bytesTransferred)
+			cur := c.transfer.N()
 			bs := cur - prev
 			prev = cur
 
@@ -401,150 +208,4 @@ func (c *Response) watchBps() {
 			c.bytesPerSecondMu.Unlock()
 		}
 	}
-}
-
-// copy transfers content for a HTTP connection established via Client.do()
-func (c *Response) copy() error {
-	if c.IsComplete() {
-		return c.err
-	}
-
-	// run BeforeCopy hook
-	if c.Request.BeforeCopy != nil {
-		if err := c.Request.BeforeCopy(c); err != nil {
-			return c.close(err)
-		}
-	}
-
-	if c.bufferSize < 1 {
-		c.bufferSize = 32 * 1024
-	}
-	buffer := make([]byte, c.bufferSize)
-
-	go c.watchBps()
-	for {
-		if err := isCanceled(c.ctx); err != nil {
-			return c.close(err)
-		}
-
-		nr, err := c.HTTPResponse.Body.Read(buffer)
-		if err != nil && err != io.EOF {
-			return c.close(err)
-		}
-
-		if err := isCanceled(c.ctx); err != nil {
-			return c.close(err)
-		}
-
-		nw, werr := c.writer.Write(buffer[:nr])
-		if werr != nil {
-			return c.close(werr)
-		}
-		if nw != nr {
-			return c.close(io.ErrShortWrite)
-		}
-		atomic.AddInt64(&c.bytesTransferred, int64(nw))
-
-		if err == io.EOF {
-			c.HTTPResponse.Body.Close()
-			c.writer.Close()
-			break
-		}
-	}
-
-	// set timestamp
-	if !c.Request.IgnoreRemoteTime {
-		if err := setLocalTimestamp(c.HTTPResponse, c.Filename); err != nil {
-			return c.close(err)
-		}
-	}
-
-	// validate checksum
-	if err := c.checksum(); err != nil {
-		return c.close(err)
-	}
-
-	return c.close(nil)
-}
-
-func setLocalTimestamp(resp *http.Response, filename string) error {
-	// https://tools.ietf.org/html/rfc7232#section-2.2
-	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Last-Modified
-	header := resp.Header.Get("Last-Modified")
-	if header == "" {
-		return nil
-	}
-	lastmod, err := time.Parse("Mon, 02 Jan 2006 15:04:05 MST", header)
-	if err != nil {
-		return nil
-	}
-	if err := os.Chtimes(filename, lastmod, lastmod); err != nil {
-		return err
-	}
-	return nil
-}
-
-// checksum validates a completed file transfer.
-func (c *Response) checksum() error {
-	if c.Request.hash == nil {
-		return nil
-	}
-
-	if c.Filename == "" {
-		panic("filename not set")
-	}
-
-	// open downloaded file
-	f, err := os.Open(c.Filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// hash file
-	if nc, err := copyBuffer(c.Request.Context(), c.Request.hash, f, nil); err != nil {
-		return err
-	} else if nc != c.Size {
-		return ErrBadLength
-	}
-
-	// compare checksum
-	sum := c.Request.hash.Sum(nil)
-	if !bytes.Equal(sum, c.Request.checksum) {
-		if c.Request.deleteOnError {
-			os.Remove(c.Filename)
-		}
-
-		return ErrBadChecksum
-	}
-
-	return nil
-}
-
-// close finalizes the Response
-func (c *Response) close(err error) error {
-	if c.IsComplete() {
-		panic("response already closed")
-	}
-
-	c.fi = nil
-
-	if c.writer != nil {
-		c.writer.Close()
-		c.writer = nil
-	}
-
-	if c.HTTPResponse != nil && c.HTTPResponse.Body != nil {
-		c.HTTPResponse.Body.Close()
-	}
-
-	c.err = err
-	c.End = time.Now()
-	close(c.Done)
-
-	if c.cancel != nil {
-		c.cancel()
-	}
-
-	return err
 }
