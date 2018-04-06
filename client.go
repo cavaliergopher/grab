@@ -275,7 +275,7 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	if nc, err := t.copy(); err != nil {
 		resp.err = err
 		return c.closeResponse
-	} else if nc != resp.Size {
+	} else if resp.Size != -1 && nc != resp.Size {
 		resp.err = ErrBadLength
 		return c.closeResponse
 	}
