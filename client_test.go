@@ -72,39 +72,42 @@ func TestChecksums(t *testing.T) {
 	tests := []struct {
 		size       int
 		sendlength bool
+		resume     bool
 		hash       hash.Hash
 		sum        string
 		match      bool
 	}{
-		{128, true, md5.New(), "37eff01866ba3f538421b30b7cbefcac", true},
-		{128, true, md5.New(), "37eff01866ba3f538421b30b7cbefcad", false},
-		{1024, true, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855b", true},
-		{1024, true, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855c", false},
-		{1048576, true, md5.New(), "c35cc7d8d91728a0cb052831bc4ef372", true},
-		{1048576, true, md5.New(), "c35cc7d8d91728a0cb052831bc4ef373", false},
-		{128, true, sha1.New(), "e6434bc401f98603d7eda504790c98c67385d535", true},
-		{128, true, sha1.New(), "e6434bc401f98603d7eda504790c98c67385d536", false},
-		{1024, true, sha1.New(), "5b00669c480d5cffbdfa8bdba99561160f2d1b77", true},
-		{1024, true, sha1.New(), "5b00669c480d5cffbdfa8bdba99561160f2d1b78", false},
-		{1048576, true, sha1.New(), "ecfc8e86fdd83811f9cc9bf500993b63069923be", true},
-		{1048576, true, sha1.New(), "ecfc8e86fdd83811f9cc9bf500993b63069923bf", false},
-		{128, true, sha256.New(), "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true},
-		{128, true, sha256.New(), "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false},
-		{1024, true, sha256.New(), "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true},
-		{1024, true, sha256.New(), "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false},
-		{1048576, true, sha256.New(), "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true},
-		{1048576, true, sha256.New(), "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false},
-		{128, true, sha512.New(), "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f7", true},
-		{128, true, sha512.New(), "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f8", false},
-		{1024, true, sha512.New(), "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566c", true},
-		{1024, true, sha512.New(), "37f652bf867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566d", false},
-		{1048576, true, sha512.New(), "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", true},
-		{1048576, true, sha512.New(), "ac1d097c4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", false},
-		// Some cases without Content-Length
-		{128, false, md5.New(), "37eff01866ba3f538421b30b7cbefcac", true},
-		{128, false, md5.New(), "37eff01866ba3f538421b30b7cbefcad", false},
-		{1024, false, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855b", true},
-		{1024, false, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855c", false},
+		{128, true, false, md5.New(), "37eff01866ba3f538421b30b7cbefcac", true},
+		{128, true, false, md5.New(), "37eff01866ba3f538421b30b7cbefcad", false},
+		{1024, true, false, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855b", true},
+		{1024, true, false, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855c", false},
+		{1048576, true, false, md5.New(), "c35cc7d8d91728a0cb052831bc4ef372", true},
+		{1048576, true, false, md5.New(), "c35cc7d8d91728a0cb052831bc4ef373", false},
+		{128, true, false, sha1.New(), "e6434bc401f98603d7eda504790c98c67385d535", true},
+		{128, true, false, sha1.New(), "e6434bc401f98603d7eda504790c98c67385d536", false},
+		{1024, true, false, sha1.New(), "5b00669c480d5cffbdfa8bdba99561160f2d1b77", true},
+		{1024, true, false, sha1.New(), "5b00669c480d5cffbdfa8bdba99561160f2d1b78", false},
+		{1048576, true, false, sha1.New(), "ecfc8e86fdd83811f9cc9bf500993b63069923be", true},
+		{1048576, true, false, sha1.New(), "ecfc8e86fdd83811f9cc9bf500993b63069923bf", false},
+		{128, true, false, sha256.New(), "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5", true},
+		{128, true, false, sha256.New(), "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be4", false},
+		{1024, true, false, sha256.New(), "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", true},
+		{1024, true, false, sha256.New(), "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c8", false},
+		{1048576, true, false, sha256.New(), "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83", true},
+		{1048576, true, false, sha256.New(), "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c82", false},
+		{128, true, false, sha512.New(), "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f7", true},
+		{128, true, false, sha512.New(), "1dffd5e3adb71d45d2245939665521ae001a317a03720a45732ba1900ca3b8351fc5c9b4ca513eba6f80bc7b1d1fdad4abd13491cb824d61b08d8c0e1561b3f8", false},
+		{1024, true, false, sha512.New(), "37f652be867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566c", true},
+		{1024, true, false, sha512.New(), "37f652bf867f28ed033269cbba201af2112c2b3fd334a89fd2f757938ddee815787cc61d6e24a8a33340d0f7e86ffc058816b88530766ba6e231620a130b566d", false},
+		{1048576, true, false, sha512.New(), "ac1d097b4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", true},
+		{1048576, true, false, sha512.New(), "ac1d097c4ea6f6ad7ba640275b9ac290e4828cd760a0ebf76d555463a4f505f95df4f611629539a2dd1848e7c1304633baa1826462b3c87521c0c6e3469b67af", false},
+		// Some cases  false,without Content-Length
+		{128, false, false, md5.New(), "37eff01866ba3f538421b30b7cbefcac", true},
+		{128, false, true, md5.New(), "37eff01866ba3f538421b30b7cbefcac", true}, // resume version
+		{128, false, false, md5.New(), "37eff01866ba3f538421b30b7cbefcad", false},
+		{1024, false, false, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855b", true},
+		{1024, false, false, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855c", false},
+		{1024, false, true, md5.New(), "b2ea9f7fcea831a4a63b213f41a8855c", false}, // resume version
 	}
 
 	for i, test := range tests {
@@ -112,16 +115,32 @@ func TestChecksums(t *testing.T) {
 		if !test.match {
 			comparison = "Mismatch"
 		}
+		if test.resume {
+			comparison = comparison + "Resume"
+		}
 
-		t.Run(fmt.Sprintf("%d-With%s%s", i, comparison, test.sum[:8]), func(t *testing.T) {
-			filename := fmt.Sprintf(".testChecksum-%s-%s", comparison, test.sum[:8])
+		t.Run(fmt.Sprintf("%d-With%s-%s", i, comparison, test.sum[:8]), func(t *testing.T) {
+			filename := fmt.Sprintf(".testChecksum-%d-%s-%s", i, comparison, test.sum[:8])
 			defer os.Remove(filename)
 
 			b, _ := hex.DecodeString(test.sum)
-			req, _ := NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d&sendlength=%v", test.size, test.sendlength))
-			req.SetChecksum(test.hash, b, true)
 
-			resp := DefaultClient.Do(req)
+			var req *Request
+			var resp *Response
+
+			if test.resume {
+				// Do first "uncomplete" request (smaller by 1 byte)
+				req, _ = NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d&sendlength=%v", test.size-1, test.sendlength))
+				req.deleteOnError = false
+				req.SetChecksum(test.hash, b, true)
+				resp = DefaultClient.Do(req)
+			}
+
+			// Normal request
+			req, _ = NewRequest(filename, ts.URL+fmt.Sprintf("?size=%d&sendlength=%v", test.size, test.sendlength))
+			req.SetChecksum(test.hash, b, true)
+			resp = DefaultClient.Do(req)
+
 			if err := resp.Err(); err != nil {
 				if err != ErrBadChecksum {
 					t.Errorf("expected: %v, got: %v", ErrBadChecksum, err)
