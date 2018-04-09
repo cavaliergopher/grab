@@ -24,12 +24,14 @@ import (
 //
 // * nohead						  disabled support for HEAD requests
 //
-// * range=[bool]				allow byte range requests (default: yes)
+// * ranged=[bool]				allow byte range requests (default: yes)
 //
 // * rate=[int]					throttle file transfer to the given limit as
 // 							        bytes per second
 //
 // * size=[int]					return a file of the specified size in bytes
+//
+// * sendlength=[bool]		send Content-Length header (default: yes)
 //
 // * sleep=[int]				delay the response by the given number of
 // 								      milliseconds (before sending headers)
@@ -63,6 +65,13 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 	ranged := true
 	if rangep := r.URL.Query().Get("ranged"); rangep != "" {
 		if _, err := fmt.Sscanf(rangep, "%t", &ranged); err != nil {
+			panic(err)
+		}
+	}
+	// send Content-Length header (default yes)?
+	sendlength := true
+	if sendlengthParam := r.URL.Query().Get("sendlength"); sendlengthParam != "" {
+		if _, err := fmt.Sscanf(sendlengthParam, "%t", &sendlength); err != nil {
 			panic(err)
 		}
 	}
@@ -130,7 +139,13 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 	}
 
 	// set response headers
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", size-offset))
+	if sendlength {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", size-offset))
+	} else {
+		// Set non-empty Transfer-Encoding to stop w.WriteHeader autogenerate Content-Length
+		// -> see https://github.com/golang/go/issues/9987 and resolution in https://golang.org/cl/9638
+		w.Header().Set("Transfer-Encoding", "identity")
+	}
 	if ranged {
 		w.Header().Set("Accept-Ranges", "bytes")
 	}
@@ -192,6 +207,19 @@ func TestTestServer(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.ContentLength != 321 {
 			t.Fatalf("expected Content-Length: %v, got %v", 321, resp.ContentLength)
+		}
+		b, _ := ioutil.ReadAll(resp.Body)
+		if len(b) != 321 {
+			t.Fatalf("expected body length: %v, got %v", 321, len(b))
+		}
+	})
+
+	t.Run("sendlength=false", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", ts.URL+"?size=321&sendlength=false&nohead", nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+		if resp.ContentLength != -1 {
+			t.Fatalf("expected Content-Length: %v, got %v", -1, resp.ContentLength)
 		}
 		b, _ := ioutil.ReadAll(resp.Body)
 		if len(b) != 321 {
