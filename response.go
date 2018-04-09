@@ -148,7 +148,7 @@ func (c *Response) BytesPerSecond() float64 {
 // Progress returns the ratio of total bytes that have been downloaded. Multiply
 // the returned value by 100 to return the percentage completed.
 func (c *Response) Progress() float64 {
-	if c.Size == 0 {
+	if c.Size <= 0 {
 		return 0
 	}
 	return float64(c.BytesComplete()) / float64(c.Size)
