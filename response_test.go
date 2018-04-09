@@ -35,7 +35,7 @@ func testComplete(t *testing.T, resp *Response) {
 			t.Error("Response.Size is zero")
 		}
 
-		if p := resp.Progress(); p != 1.00 {
+		if p := resp.Progress(); resp.Size > 0 && p != 1.00 {
 			t.Errorf("Response.Progress returned %v (%v/%v bytes), expected 1", p, resp.BytesComplete(), resp.Size)
 		}
 	}
