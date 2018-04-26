@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -133,7 +134,7 @@ func (c *Response) Err() error {
 func (c *Response) BytesComplete() int64 {
 	c.transferMu.Lock()
 	defer c.transferMu.Unlock()
-	return c.bytesResumed + c.transfer.N()
+	return atomic.LoadInt64(&c.bytesResumed) + c.transfer.N()
 }
 
 // BytesPerSecond returns the number of bytes transferred in the last second. If
