@@ -79,7 +79,8 @@ type Response struct {
 
 	// transfer is responsible for copying data from the remote server to a local
 	// file, tracking progress and allowing for cancelation.
-	transfer *transfer
+	transfer   *transfer
+	transferMu sync.Mutex
 
 	// bytesPerSecond specifies the number of bytes that have been transferred in
 	// the last 1-second window.
@@ -130,6 +131,8 @@ func (c *Response) Err() error {
 // the destination, including any bytes that were resumed from a previous
 // download.
 func (c *Response) BytesComplete() int64 {
+	c.transferMu.Lock()
+	defer c.transferMu.Unlock()
 	return c.bytesResumed + c.transfer.N()
 }
 
@@ -137,6 +140,8 @@ func (c *Response) BytesComplete() int64 {
 // the download is already complete, the average bytes/sec for the life of the
 // download is returned.
 func (c *Response) BytesPerSecond() float64 {
+	c.transferMu.Lock()
+	defer c.transferMu.Unlock()
 	if c.IsComplete() {
 		return float64(c.transfer.N()) / c.Duration().Seconds()
 	}
@@ -199,6 +204,8 @@ func (c *Response) watchBps() {
 			d := now.Sub(then)
 			then = now
 
+			c.transferMu.Lock()
+			defer c.transferMu.Unlock()
 			cur := c.transfer.N()
 			bs := cur - prev
 			prev = cur

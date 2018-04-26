@@ -429,6 +429,9 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	}
 	b := make([]byte, resp.bufferSize)
 	go resp.watchBps()
+
+	resp.transferMu.Lock()
+	defer resp.transferMu.Unlock()
 	resp.transfer = newTransfer(resp.Request.Context(), resp.writer, resp.HTTPResponse.Body, b)
 	if _, resp.err = resp.transfer.copy(); resp.err != nil {
 		return c.closeResponse
