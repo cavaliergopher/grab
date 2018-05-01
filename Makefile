@@ -20,7 +20,8 @@ lint:
 	gocyclo -over 15 . || :
 	misspell ./* || :
 
-deps:	
+deps:
+	$(GOGET) golang.org/x/time/rate
 	$(GOGET) github.com/golang/lint/golint
 	$(GOGET) github.com/fzipp/gocyclo
 	$(GOGET) github.com/client9/misspell/cmd/misspell

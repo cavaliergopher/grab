@@ -6,7 +6,10 @@ go:
   - 1.8.x
   - 1.7.x
 
-script: make check
+script:
+  - make deps
+  - make check
+  - make lint
 
 env:
   - GOARCH=amd64
