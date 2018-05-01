@@ -15,6 +15,7 @@ rad features:
 * Safely cancel downloads using context.Context
 * Validate downloads using checksums
 * Download batches of files concurrently
+* Apply rate limits
 
 Requires Go v1.7+
 
