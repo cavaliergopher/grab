@@ -39,7 +39,7 @@ func TestRateLimiter(t *testing.T) {
 	// ensure multiple trips to the rate limiter by downloading 8 bytes at a time
 	req.BufferSize = 8
 
-	// limit to 128bps
+	// limit to 512bps
 	lim := &testRateLimiter{r: 512}
 	req.RateLimiter = lim
 
@@ -57,12 +57,12 @@ func TestRateLimiter(t *testing.T) {
 	}
 }
 
-func ExampleRequest_RateLimiter() {
+func ExampleRateLimiter() {
 	req, _ := NewRequest("", "http://www.golang-book.com/public/pdf/gobook.pdf")
 
 	// Attach a rate limiter, using the token bucket implementation from
 	// golang.org/x/time/rate. Limit to 1Mbps with burst up to 2Mbps.
-	req.RateLimiter = rate.NewLimiter(1048576, 1048576)
+	req.RateLimiter = rate.NewLimiter(1048576, 2097152)
 
 	resp := DefaultClient.Do(req)
 	if err := resp.Err(); err != nil {
