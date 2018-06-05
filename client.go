@@ -397,18 +397,17 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 	}
 
 	// compute write flags
-	if resp.fi == nil {
-		resp.writeFlags = os.O_CREATE | os.O_WRONLY
-	} else {
+	flag := os.O_CREATE | os.O_WRONLY
+	if resp.fi != nil {
 		if resp.DidResume {
-			resp.writeFlags = os.O_APPEND | os.O_WRONLY
+			flag = os.O_APPEND | os.O_WRONLY
 		} else {
-			resp.writeFlags = os.O_TRUNC | os.O_WRONLY
+			flag = os.O_TRUNC | os.O_WRONLY
 		}
 	}
 
 	// open file
-	f, err := os.OpenFile(resp.Filename, resp.writeFlags, 0644)
+	f, err := os.OpenFile(resp.Filename, flag, 0644)
 	if err != nil {
 		resp.err = err
 		return c.closeResponse
