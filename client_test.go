@@ -465,3 +465,39 @@ func TestBeforeCopyHook(t *testing.T) {
 		testComplete(t, resp)
 	})
 }
+
+func TestIssue37(t *testing.T) {
+	filename := "./.testIssue37"
+	largeSize := 2097152
+	smallSize := 1048576
+	defer os.RemoveAll(filename)
+
+	// download large file
+	req, _ := NewRequest(filename, fmt.Sprintf("%s?size=%d", ts.URL, largeSize))
+	resp := DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// download new, smaller version of same file
+	req, _ = NewRequest(filename, fmt.Sprintf("%s?size=%d", ts.URL, smallSize))
+	req.NoResume = true
+	resp = DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// local file should have truncated and not resumed
+	if resp.DidResume {
+		t.Errorf("expected download to truncate, resumed instead")
+	}
+
+	fi, err := os.Stat(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if fi.Size() != int64(smallSize) {
+		t.Errorf("expected file size %d, got %d", smallSize, fi.Size())
+	}
+}
