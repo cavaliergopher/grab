@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -248,7 +249,7 @@ func ExampleGet() {
 	// download a file to /tmp
 	resp, err := Get("/tmp", "http://example.com/example.zip")
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	fmt.Println("Download saved to", resp.Filename)
