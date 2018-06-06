@@ -19,13 +19,34 @@ rad features:
 
 Requires Go v1.7+
 
-## Older versions
+## Design trade-offs
 
-If you are using an older version of Go, or require previous versions of the
-Grab API, you can import older version of this package, thanks to gpkg.in.
-Please see all GitHub tags for available versions.
+The primary use case for Grab is to concurrently downloading thousands of large
+files from remote file repositories where the remote files are immutable.
+Examples include operating system package repositories or ISO libraries.
 
-	$ go get gopkg.in/cavaliercoder/grab.v1
+Grab aims to provide robust, sane defaults. These are usually determined using
+the HTTP specifications, or by mimicking the behavior of common web clients like
+cURL, wget and common web browsers.
+
+Grab aims to be stateless. The only state that exists is the remote files you
+wish to download and the local copy which may be completed, partially completed
+or not yet created. The advantage to this is that the local file system is not
+cluttered unnecessarily with addition state files (like a `.crdownload` file).
+The disadvantage of this approach is that grab must make assumptions about the
+local and remote state; specifically, that they have not been modified by
+another program.
+
+If the local or remote file are modified outside of grab, and you download the
+file again with resuming enabled, the local file will likely become corrupted.
+In this case, you might consider making remote files immutable, or disabling
+resume.
+
+Grab aims to enable best-in-class functionality for more complex features
+through extensible interfaces, rather than reimplementation. For example,
+you can provide your own Hash algorithm to compute file checksums, or your
+own rate limiter implementation (with all the associated trade-offs) to rate
+limit downloads.
 
 
 ## Example
