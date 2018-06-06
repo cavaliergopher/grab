@@ -7,14 +7,16 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 // testRateLimiter is a naive rate limiter that limits throughput to r tokens
 // per second. The total number of tokens issued is tracked as n.
 type testRateLimiter struct {
 	r, n int
+}
+
+func NewLimiter(r int) RateLimiter {
+	return &testRateLimiter{r: r}
 }
 
 func (c *testRateLimiter) WaitN(ctx context.Context, n int) (err error) {
@@ -60,9 +62,9 @@ func TestRateLimiter(t *testing.T) {
 func ExampleRateLimiter() {
 	req, _ := NewRequest("", "http://www.golang-book.com/public/pdf/gobook.pdf")
 
-	// Attach a rate limiter, using the token bucket implementation from
-	// golang.org/x/time/rate. Limit to 1Mbps with burst up to 2Mbps.
-	req.RateLimiter = rate.NewLimiter(1048576, 2097152)
+	// Attach a 1Mbps rate limiter, like the token bucket implementation from
+	// golang.org/x/time/rate.
+	req.RateLimiter = NewLimiter(1048576)
 
 	resp := DefaultClient.Do(req)
 	if err := resp.Err(); err != nil {
