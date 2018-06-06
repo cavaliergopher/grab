@@ -278,7 +278,7 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	defer f.Close()
 
 	// hash file
-	t := newTransfer(resp.Request.Context(), resp.Request.hash, f, nil)
+	t := newTransfer(resp.Request.Context(), nil, resp.Request.hash, f, nil)
 	if nc, err := t.copy(); err != nil {
 		resp.err = err
 		return c.closeResponse
@@ -431,6 +431,7 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 	b := make([]byte, resp.bufferSize)
 	resp.transfer = newTransfer(
 		resp.Request.Context(),
+		resp.Request.RateLimiter,
 		resp.writer,
 		resp.HTTPResponse.Body,
 		b)
