@@ -24,7 +24,7 @@ Requires Go v1.7+
 The following example downloads a PDF copy of the free eBook, "An Introduction
 to Programming in Go" into the current working directory.
 
-```
+```go
 resp, err := grab.Get(".", "http://www.golang-book.com/public/pdf/gobook.pdf")
 if err != nil {
 	log.Fatal(err)
