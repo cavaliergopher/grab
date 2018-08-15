@@ -94,15 +94,6 @@ type Request struct {
 	// the Response object.
 	AfterCopy Hook
 
-	// AfterClose is a user provided callback that is called immediately after
-	// a request is closed, on success or failure, after the Response.Done channel
-	// is closed. The Response passed to the callback will always be completed and
-	// finalized.
-	//
-	// The error returned by Response.Err is overwritten with the error returned
-	// by AfterClose. In most cases, AfterClose should return Response.Err.
-	AfterClose Hook
-
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash
 	checksum      []byte

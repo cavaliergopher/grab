@@ -508,10 +508,5 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 		resp.cancel()
 	}
 
-	// run AfterClose hook
-	if f := resp.Request.AfterClose; f != nil {
-		resp.err = f(resp)
-	}
-
 	return nil
 }
