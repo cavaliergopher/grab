@@ -152,8 +152,30 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 }))
 
 func TestMain(m *testing.M) {
-	defer ts.Close()
-	os.Exit(m.Run())
+	os.Exit(func() int {
+		// clean up test web server
+		defer ts.Close()
+
+		// chdir to temp so test files downloaded to pwd are isolated and cleaned up
+		cwd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		tmpDir, err := ioutil.TempDir("", "grab-")
+		if err != nil {
+			panic(err)
+		}
+		if err := os.Chdir(tmpDir); err != nil {
+			panic(err)
+		}
+		defer func() {
+			os.Chdir(cwd)
+			if err := os.RemoveAll(tmpDir); err != nil {
+				panic(err)
+			}
+		}()
+		return m.Run()
+	}())
 }
 
 // TestTestServer ensures that the test server behaves as expected so that it
