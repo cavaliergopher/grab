@@ -430,10 +430,21 @@ func TestBeforeCopyHook(t *testing.T) {
 	filename := "./.testBeforeCopy"
 	t.Run("Noop", func(t *testing.T) {
 		defer os.RemoveAll(filename)
+		called := false
 		req, _ := NewRequest(filename, ts.URL)
 		req.BeforeCopy = func(resp *Response) error {
+			called = true
 			if resp.IsComplete() {
-				t.Errorf("Response object passed to BeforeCopy hook has already been closed")
+				t.Error("Response object passed to BeforeCopy hook has already been closed")
+			}
+			if resp.Progress() != 0 {
+				t.Error("Download progress already > 0 when BeforeCopy hook was called")
+			}
+			if resp.Duration() == 0 {
+				t.Error("Duration was zero when BeforeCopy was called")
+			}
+			if resp.BytesComplete() != 0 {
+				t.Error("BytesComplete already > 0 when BeforeCopy hook was called")
 			}
 			return nil
 		}
@@ -442,6 +453,9 @@ func TestBeforeCopyHook(t *testing.T) {
 			t.Errorf("unexpected error using BeforeCopy hook: %v", err)
 		}
 		testComplete(t, resp)
+		if !called {
+			t.Error("BeforeCopy hook was never called")
+		}
 	})
 
 	t.Run("WithError", func(t *testing.T) {
@@ -449,9 +463,6 @@ func TestBeforeCopyHook(t *testing.T) {
 		testError := errors.New("test")
 		req, _ := NewRequest(filename, ts.URL)
 		req.BeforeCopy = func(resp *Response) error {
-			if resp.IsComplete() {
-				t.Errorf("Response object passed to BeforeCopy hook has already been closed")
-			}
 			return testError
 		}
 		resp := DefaultClient.Do(req)
@@ -459,8 +470,145 @@ func TestBeforeCopyHook(t *testing.T) {
 			t.Errorf("expected error '%v', got '%v'", testError, err)
 		}
 		if resp.BytesComplete() != 0 {
-			t.Errorf("expected 0 bytes completed for cancelled BeforeCopy hook, got %d",
+			t.Errorf("expected 0 bytes completed for canceled BeforeCopy hook, got %d",
 				resp.BytesComplete())
+		}
+		testComplete(t, resp)
+	})
+}
+
+func TestAfterCopyHook(t *testing.T) {
+	filename := "./.testAfterCopy"
+	t.Run("Noop", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		called := false
+		req, _ := NewRequest(filename, ts.URL)
+		req.AfterCopy = func(resp *Response) error {
+			called = true
+			if resp.IsComplete() {
+				t.Error("Response object passed to AfterCopy hook has already been closed")
+			}
+			if resp.Progress() <= 0 {
+				t.Error("Download progress was 0 when AfterCopy hook was called")
+			}
+			if resp.Duration() == 0 {
+				t.Error("Duration was zero when AfterCopy was called")
+			}
+			if resp.BytesComplete() <= 0 {
+				t.Error("BytesComplete was 0 when AfterCopy hook was called")
+			}
+			return nil
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			t.Errorf("unexpected error using AfterCopy hook: %v", err)
+		}
+		testComplete(t, resp)
+		if !called {
+			t.Error("AfterCopy hook was never called")
+		}
+	})
+
+	t.Run("WithError", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		testError := errors.New("test")
+		req, _ := NewRequest(filename, ts.URL)
+		req.AfterCopy = func(resp *Response) error {
+			return testError
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != testError {
+			t.Errorf("expected error '%v', got '%v'", testError, err)
+		}
+		if resp.BytesComplete() <= 0 {
+			t.Errorf("ByteCompleted was %d after AfterCopy hook was called",
+				resp.BytesComplete())
+		}
+		testComplete(t, resp)
+	})
+}
+
+func TestAfterCloseHook(t *testing.T) {
+	filename := "./.testAfterClose"
+	t.Run("Noop", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		called := false
+		req, _ := NewRequest(filename, ts.URL)
+		req.AfterClose = func(resp *Response) error {
+			called = true
+			if !resp.IsComplete() {
+				t.Error("Response object passed to AfterClose hook was not closed")
+			}
+			if v := resp.Progress(); v <= 0 {
+				t.Errorf("Download progress was %v when AfterClose hook was called", v)
+			}
+			if v := resp.Duration(); v <= 0 {
+				t.Errorf("Duration was %v when AfterClose was called", v)
+			}
+			if v := resp.BytesComplete(); v <= 0 {
+				t.Errorf("BytesComplete was %v when AfterClose hook was called", v)
+			}
+			return nil
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != nil {
+			t.Errorf("unexpected error using AfterClose hook: %v", err)
+		}
+		testComplete(t, resp)
+		if !called {
+			t.Error("AfterClose hook was never called")
+		}
+	})
+
+	t.Run("WithError", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		testError := errors.New("test")
+		req, _ := NewRequest(filename, ts.URL)
+		req.AfterClose = func(resp *Response) error {
+			return testError
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != testError {
+			t.Errorf("expected error '%v', got '%v'", testError, err)
+		}
+		if resp.BytesComplete() <= 0 {
+			t.Errorf("ByteCompleted was %d after AfterClose hook was called",
+				resp.BytesComplete())
+		}
+		testComplete(t, resp)
+	})
+
+	t.Run("WithMaskedError", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		errA := errors.New("error in BeforeCopy")
+		errB := errors.New("error in AfterClose")
+		req, _ := NewRequest(filename, ts.URL)
+		req.BeforeCopy = func(*Response) error {
+			return errA
+		}
+		req.AfterClose = func(*Response) error {
+			return errB
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != errB {
+			t.Errorf("expected error '%v', got '%v'", errB, err)
+		}
+		testComplete(t, resp)
+	})
+
+	t.Run("WithUnmaskedError", func(t *testing.T) {
+		defer os.RemoveAll(filename)
+		errA := errors.New("error in BeforeCopy")
+		req, _ := NewRequest(filename, ts.URL)
+		req.BeforeCopy = func(*Response) error {
+			return errA
+		}
+		req.AfterClose = func(resp *Response) error {
+			return resp.Err()
+		}
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); err != errA {
+			t.Errorf("expected error '%v', got '%v'", errA, err)
 		}
 		testComplete(t, resp)
 	})

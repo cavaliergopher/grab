@@ -7,9 +7,15 @@ import (
 	"net/url"
 )
 
-// A Hook is a user provided function that can be called by grab at various
-// stages of a requests lifecycle. If a hook returns an error, the associated
-// request is canceled and the same error is returned on the Response object.
+// A Hook is a user provided callback function that can be called by grab at
+// various stages of a requests lifecycle. If a hook returns an error, the
+// associated request is canceled and the same error is returned on the Response
+// object.
+//
+// Hook functions are called syncronously and should never block unnecessarily.
+// Response methods that block until a download is complete, such as
+// Response.Err, Response.Cancel or Response.Wait will deadlock. To cancel a
+// download from a callback, simply return a non-nil error.
 type Hook func(*Response) error
 
 // A Request represents an HTTP file transfer request to be sent by a Client.
@@ -76,10 +82,26 @@ type Request struct {
 	// polled.
 	RateLimiter RateLimiter
 
-	// BeforeCopy is a user provided function that is called immediately before
+	// BeforeCopy is a user provided callback that is called immediately before
 	// a request starts downloading. If BeforeCopy returns an error, the request
 	// is cancelled and the same error is returned on the Response object.
 	BeforeCopy Hook
+
+	// AfterCopy is a user provided callback that is called immediately after a
+	// request has finished downloading, before checksum validation and closure.
+	// This hook is only called if the transfer was successful. If AfterCopy
+	// returns an error, the request is canceled and the same error is returned on
+	// the Response object.
+	AfterCopy Hook
+
+	// AfterClose is a user provided callback that is called immediately after
+	// a request is closed, on success or failure, after the Response.Done channel
+	// is closed. The Response passed to the callback will always be completed and
+	// finalized.
+	//
+	// The error returned by Response.Err is overwritten with the error returned
+	// by AfterClose. In most cases, AfterClose should return Response.Err.
+	AfterClose Hook
 
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash

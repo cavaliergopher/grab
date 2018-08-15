@@ -447,8 +447,8 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	}
 
 	// run BeforeCopy hook
-	if resp.Request.BeforeCopy != nil {
-		resp.err = resp.Request.BeforeCopy(resp)
+	if f := resp.Request.BeforeCopy; f != nil {
+		resp.err = f(resp)
 		if resp.err != nil {
 			return c.closeResponse
 		}
@@ -458,17 +458,36 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 		panic("developer error: Response.transfer is not initialized")
 	}
 	go resp.watchBps()
-	if _, resp.err = resp.transfer.copy(); resp.err != nil {
+	_, resp.err = resp.transfer.copy()
+	if resp.err != nil {
 		return c.closeResponse
 	}
+	closeWriter(resp)
 
 	// set timestamp
 	if !resp.Request.IgnoreRemoteTime {
-		if resp.err = setLastModified(resp.HTTPResponse, resp.Filename); resp.err != nil {
+		resp.err = setLastModified(resp.HTTPResponse, resp.Filename)
+		if resp.err != nil {
 			return c.closeResponse
 		}
 	}
+
+	// run AfterCopy hook
+	if f := resp.Request.AfterCopy; f != nil {
+		resp.err = f(resp)
+		if resp.err != nil {
+			return c.closeResponse
+		}
+	}
+
 	return c.checksumFile
+}
+
+func closeWriter(resp *Response) {
+	if resp.writer != nil {
+		resp.writer.Close()
+		resp.writer = nil
+	}
 }
 
 // close finalizes the Response
@@ -478,10 +497,7 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 	}
 
 	resp.fi = nil
-	if resp.writer != nil {
-		resp.writer.Close()
-		resp.writer = nil
-	}
+	closeWriter(resp)
 	if resp.HTTPResponse != nil && resp.HTTPResponse.Body != nil {
 		resp.HTTPResponse.Body.Close()
 	}
@@ -491,5 +507,11 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 	if resp.cancel != nil {
 		resp.cancel()
 	}
+
+	// run AfterClose hook
+	if f := resp.Request.AfterClose; f != nil {
+		resp.err = f(resp)
+	}
+
 	return nil
 }

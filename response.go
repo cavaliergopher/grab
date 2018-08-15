@@ -104,7 +104,7 @@ func (c *Response) IsComplete() bool {
 	}
 }
 
-// Cancel cancels the file transfer by cancelling the underlying Context for
+// Cancel cancels the file transfer by canceling the underlying Context for
 // this Response. Cancel blocks until the transfer is closed and returns any
 // error - typically context.Canceled.
 func (c *Response) Cancel() error {
