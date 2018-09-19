@@ -8,6 +8,12 @@ import (
 	"github.com/cavaliercoder/grab"
 )
 
+var (
+	inProgress = 0
+	failed     = 0
+	succeeded  = 0
+)
+
 func main() {
 	// validate command args
 	if len(os.Args) < 2 {
@@ -48,12 +54,15 @@ Loop:
 		}
 	}
 
-	fmt.Printf("%d files downloaded.\n", len(urls))
-}
+	fmt.Printf(
+		"Finished %d successful, %d failed, %d incomplete.\n",
+		succeeded,
+		failed,
+		inProgress)
 
-// inProgress tracks the number of incomplete downloads currently printed to the
-// terminal
-var inProgress = 0
+	// return the number of failed downloads as exit code
+	os.Exit(failed)
+}
 
 // updateUI prints the progress of all downloads to the terminal
 func updateUI(responses []*grab.Response) {
@@ -66,10 +75,12 @@ func updateUI(responses []*grab.Response) {
 	for i, resp := range responses {
 		if resp != nil && resp.IsComplete() {
 			if resp.Err() != nil {
+				failed++
 				fmt.Fprintf(os.Stderr, "Error downloading %s: %v\n",
 					resp.Request.URL(),
 					resp.Err())
 			} else {
+				succeeded++
 				fmt.Printf("Finished %s %d / %d bytes (%d%%)\n",
 					resp.Filename,
 					resp.BytesComplete(),

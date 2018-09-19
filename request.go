@@ -12,7 +12,7 @@ import (
 // associated request is canceled and the same error is returned on the Response
 // object.
 //
-// Hook functions are called syncronously and should never block unnecessarily.
+// Hook functions are called synchronously and should never block unnecessarily.
 // Response methods that block until a download is complete, such as
 // Response.Err, Response.Cancel or Response.Wait will deadlock. To cancel a
 // download from a callback, simply return a non-nil error.
