@@ -1,12 +1,12 @@
 package grab
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
 
 var (
-	// ErrBadStatusCode indicates that the server response had a status code that
-	// was not in the 200-299 range.
-	ErrBadStatusCode = errors.New("server returned a non-2XX status code")
-
 	// ErrBadLength indicates that the server response or an existing file does
 	// not match the expected content length.
 	ErrBadLength = errors.New("bad content length")
@@ -26,3 +26,17 @@ var (
 	// ErrFileExists indicates that the destination path already exists.
 	ErrFileExists = errors.New("file exists")
 )
+
+// StatusCodeError indicates that the server response had a status code that
+// was not in the 200-299 range (after following any redirects).
+type StatusCodeError int
+
+func (err StatusCodeError) Error() string {
+	return fmt.Sprintf("server returned %d %s", err, http.StatusText(int(err)))
+}
+
+// IsStatusCodeError returns true if the given error is of type StatusCodeError.
+func IsStatusCodeError(err error) bool {
+	_, ok := err.(StatusCodeError)
+	return ok
+}

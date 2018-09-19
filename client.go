@@ -348,7 +348,7 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 	// check status code
 	if !resp.Request.IgnoreBadStatusCodes {
 		if resp.HTTPResponse.StatusCode < 200 || resp.HTTPResponse.StatusCode > 299 {
-			resp.err = ErrBadStatusCode
+			resp.err = StatusCodeError(resp.HTTPResponse.StatusCode)
 			return c.closeResponse
 		}
 	}

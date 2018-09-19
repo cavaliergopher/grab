@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"math/rand"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -410,8 +411,13 @@ func TestResponseCode(t *testing.T) {
 		defer os.Remove(filename)
 		req, _ := NewRequest(filename, ts.URL+"?status=404")
 		resp := DefaultClient.Do(req)
-		if err := resp.Err(); err != ErrBadStatusCode {
-			t.Errorf("expected error '%v', got '%v'", ErrBadStatusCode, err)
+		expect := StatusCodeError(http.StatusNotFound)
+		err := resp.Err()
+		if err != expect {
+			t.Errorf("expected %v, got '%v'", expect, err)
+		}
+		if !IsStatusCodeError(err) {
+			t.Errorf("expected IsStatusCodeError to return true for %T: %v", err, err)
 		}
 	})
 
