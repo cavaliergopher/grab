@@ -570,3 +570,25 @@ func TestIssue37(t *testing.T) {
 		t.Errorf("expected file size %d, got %d", smallSize, fi.Size())
 	}
 }
+
+func TestHeadBadStatus(t *testing.T) {
+	// ref: https://github.com/cavaliercoder/grab/issues/43
+	expect := http.StatusOK
+	filename := ".testIssue43"
+	testURL := fmt.Sprintf(
+		"%s/%s?headStatus=%d",
+		ts.URL,
+		filename,
+		http.StatusForbidden)
+	req, _ := NewRequest("", testURL)
+	resp := DefaultClient.Do(req)
+	if err := resp.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if resp.HTTPResponse.StatusCode != expect {
+		t.Errorf(
+			"expected status code: %d, got:% d",
+			expect,
+			resp.HTTPResponse.StatusCode)
+	}
+}

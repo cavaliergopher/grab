@@ -45,6 +45,13 @@ var ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http
 			panic(err)
 		}
 	}
+	if r.Method == "HEAD" {
+		if v := r.URL.Query().Get("headStatus"); v != "" {
+			if _, err := fmt.Sscanf(v, "%d", &statusCode); err != nil {
+				panic(err)
+			}
+		}
+	}
 
 	// allow HEAD requests?
 	if _, ok := r.URL.Query()["nohead"]; ok && r.Method == "HEAD" {
@@ -206,6 +213,19 @@ func TestTestServer(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			panic("HEAD request was allowed despite ?nohead being set")
+		}
+	})
+
+	t.Run("headStatus", func(t *testing.T) {
+		expect := http.StatusTeapot
+		req, _ := http.NewRequest(
+			"HEAD",
+			fmt.Sprintf("%s?headStatus=%d", ts.URL, expect),
+			nil)
+		resp, _ := http.DefaultClient.Do(req)
+		defer resp.Body.Close()
+		if resp.StatusCode != expect {
+			t.Fatalf("expected status: %v, got: %v", expect, resp.StatusCode)
 		}
 	})
 
