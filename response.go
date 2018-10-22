@@ -208,3 +208,17 @@ func (c *Response) watchBps() {
 		}
 	}
 }
+
+func (c *Response) requestMethod() string {
+	if c == nil || c.HTTPResponse == nil || c.HTTPResponse.Request == nil {
+		return ""
+	}
+	return c.HTTPResponse.Request.Method
+}
+
+func (c *Response) closeResponseBody() error {
+	if c.HTTPResponse == nil || c.HTTPResponse.Body == nil {
+		return nil
+	}
+	return c.HTTPResponse.Body.Close()
+}

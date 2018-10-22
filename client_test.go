@@ -571,8 +571,11 @@ func TestIssue37(t *testing.T) {
 	}
 }
 
+// TestHeadBadStatus validates that HEAD requests that return non-200 can be
+// ignored and succeed if the GET requests succeeeds.
+//
+// Fixes: https://github.com/cavaliercoder/grab/issues/43
 func TestHeadBadStatus(t *testing.T) {
-	// ref: https://github.com/cavaliercoder/grab/issues/43
 	expect := http.StatusOK
 	filename := ".testIssue43"
 	testURL := fmt.Sprintf(

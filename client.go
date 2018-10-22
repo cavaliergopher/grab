@@ -329,6 +329,12 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 	if resp.err != nil {
 		return c.closeResponse
 	}
+	resp.HTTPResponse.Body.Close()
+
+	if resp.HTTPResponse.StatusCode != http.StatusOK {
+		return c.getRequest
+	}
+
 	return c.readResponse
 }
 
@@ -337,13 +343,6 @@ func (c *Client) getRequest(resp *Response) stateFunc {
 	if resp.err != nil {
 		return c.closeResponse
 	}
-	return c.readResponse
-}
-
-func (c *Client) readResponse(resp *Response) stateFunc {
-	if resp.HTTPResponse == nil {
-		panic("Response.HTTPResponse is not ready")
-	}
 
 	// check status code
 	if !resp.Request.IgnoreBadStatusCodes {
@@ -351,6 +350,14 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 			resp.err = StatusCodeError(resp.HTTPResponse.StatusCode)
 			return c.closeResponse
 		}
+	}
+
+	return c.readResponse
+}
+
+func (c *Client) readResponse(resp *Response) stateFunc {
+	if resp.HTTPResponse == nil {
+		panic("Response.HTTPResponse is not ready")
 	}
 
 	// check expected size
@@ -371,14 +378,12 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 		}
 		// Request.Filename will be empty or a directory
 		resp.Filename = filepath.Join(resp.Request.Filename, filename)
-		return c.statFileInfo
 	}
 
-	if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
-		resp.CanResume = true
-	}
-
-	if resp.HTTPResponse.Request.Method == "HEAD" {
+	if resp.requestMethod() == "HEAD" {
+		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
+			resp.CanResume = true
+		}
 		return c.statFileInfo
 	}
 	return c.openWriter
@@ -498,9 +503,7 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 
 	resp.fi = nil
 	closeWriter(resp)
-	if resp.HTTPResponse != nil && resp.HTTPResponse.Body != nil {
-		resp.HTTPResponse.Body.Close()
-	}
+	resp.closeResponseBody()
 
 	resp.End = time.Now()
 	close(resp.Done)
