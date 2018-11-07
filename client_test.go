@@ -103,9 +103,11 @@ func TestChecksums(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		var expect error
 		comparison := "Match"
 		if !test.match {
 			comparison = "Mismatch"
+			expect = ErrBadChecksum
 		}
 
 		t.Run(fmt.Sprintf("With%s%s", comparison, test.sum[:8]), func(t *testing.T) {
@@ -117,14 +119,18 @@ func TestChecksums(t *testing.T) {
 			req.SetChecksum(test.hash, b, true)
 
 			resp := DefaultClient.Do(req)
-			if err := resp.Err(); err != nil {
-				if err != ErrBadChecksum {
+			err := resp.Err()
+			if err != expect {
+				t.Errorf("expected error: %v, got: %v", expect, err)
+			}
+
+			// ensure mismatch file was deleted
+			if !test.match {
+				if _, err := os.Stat(filename); err == nil {
+					t.Errorf("checksum failure not cleaned up: %s", filename)
+				} else if !os.IsNotExist(err) {
 					panic(err)
-				} else if test.match {
-					t.Errorf("error: %v", err)
 				}
-			} else if !test.match {
-				t.Errorf("expected: %v, got: %v", ErrBadChecksum, err)
 			}
 
 			testComplete(t, resp)
