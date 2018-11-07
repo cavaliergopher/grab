@@ -290,10 +290,15 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	// compare checksum
 	sum := resp.Request.hash.Sum(nil)
 	if !bytes.Equal(sum, resp.Request.checksum) {
-		if resp.Request.deleteOnError {
-			os.Remove(resp.Filename)
-		}
 		resp.err = ErrBadChecksum
+		if resp.Request.deleteOnError {
+			if err := os.Remove(resp.Filename); err != nil {
+				// err should be os.PathError and include file path
+				resp.err = fmt.Errorf(
+					"cannot remove downloaded file with checksum mismatch: %v",
+					err)
+			}
+		}
 	}
 	return c.closeResponse
 }
