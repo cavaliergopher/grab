@@ -264,34 +264,20 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	if resp.Request.hash == nil {
 		return c.closeResponse
 	}
-
 	if resp.Filename == "" {
 		panic("filename not set")
 	}
-
-	// open downloaded file
-	f, err := os.Open(resp.Filename)
-	if err != nil {
-		resp.err = err
-		return c.closeResponse
-	}
-	defer f.Close()
-
-	// hash file
-	t := newTransfer(resp.Request.Context(), nil, resp.Request.hash, f, nil)
-	if nc, err := t.copy(); err != nil {
-		resp.err = err
-		return c.closeResponse
-	} else if nc != resp.Size {
-		resp.err = ErrBadLength
-		return c.closeResponse
-	}
+	req := resp.Request
 
 	// compare checksum
-	sum := resp.Request.hash.Sum(nil)
-	if !bytes.Equal(sum, resp.Request.checksum) {
+	var sum []byte
+	sum, resp.err = checksum(req.Context(), resp.Filename, req.hash)
+	if resp.err != nil {
+		return c.closeResponse
+	}
+	if !bytes.Equal(sum, req.checksum) {
 		resp.err = ErrBadChecksum
-		if resp.Request.deleteOnError {
+		if req.deleteOnError {
 			if err := os.Remove(resp.Filename); err != nil {
 				// err should be os.PathError and include file path
 				resp.err = fmt.Errorf(

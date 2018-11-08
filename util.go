@@ -1,7 +1,9 @@
 package grab
 
 import (
+	"context"
 	"fmt"
+	"hash"
 	"mime"
 	"net/http"
 	"os"
@@ -64,4 +66,24 @@ func guessFilename(resp *http.Response) (string, error) {
 	}
 
 	return filename, nil
+}
+
+// checksum returns a hash of the given file, using the given hash algorithm.
+func checksum(ctx context.Context, filename string, h hash.Hash) (b []byte, err error) {
+	var f *os.File
+	f, err = os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer func() {
+		err = f.Close()
+	}()
+
+	t := newTransfer(ctx, nil, h, f, nil)
+	if _, err = t.copy(); err != nil {
+		return
+	}
+
+	b = h.Sum(nil)
+	return
 }
