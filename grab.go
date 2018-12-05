@@ -1,6 +1,7 @@
 package grab
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -61,4 +62,53 @@ func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, err
 
 	ch := DefaultClient.DoBatch(workers, reqs...)
 	return ch, nil
+}
+
+// GetParallel is used to download large files in multiple chunks, where each chunk
+// is downloaded in parallel through multiple HTTP requests.
+func GetParallel(dst, urlStr string, chunkSize int64, workers int) (<-chan *Response, int, error) {
+	req, err := NewRequest(dst, urlStr)
+	if err != nil {
+		return nil, 0, err
+	}
+	// cancel will be called on all code-paths via closeResponse
+	ctx, cancel := context.WithCancel(req.Context())
+	resp := &Response{
+		Request: req,
+		Done:    make(chan struct{}, 0),
+		ctx:     ctx,
+		cancel:  cancel,
+	}
+	// Get the size of the file with a HEAD request
+	client := DefaultClient
+	client.run(resp, client.headRequest)
+
+	// The number of chunks the download file is being split into
+	chunks := (resp.Size / chunkSize) + 1
+	reqs := make([]*Request, chunks)
+
+	// startByte and endByte determines the positions of the chunk that should be downloaded
+	var startByte = int64(0)
+	var endByte = chunkSize - 1
+
+	var count = 0
+	for startByte < resp.Size {
+		req, err := NewRequest(dst, urlStr)
+		if err != nil {
+			return nil, 0, err
+		}
+		if endByte >= resp.Size {
+			endByte = resp.Size - 1
+		}
+		rangeHeader := fmt.Sprintf("bytes=%d-%d", startByte, endByte)
+		req.HTTPRequest.Header.Add("Range", rangeHeader)
+		reqs[count] = req
+
+		startByte = endByte + 1
+		endByte += chunkSize
+		count++
+	}
+
+	ch := client.DoBatch(workers, reqs...)
+	return ch, count, nil
 }

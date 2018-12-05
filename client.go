@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -410,12 +413,20 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 	}
 	resp.writer = f
 
+	byteRange := resp.Request.HTTPRequest.Header.Get("Range")
 	// seek to start or end
-	whence := os.SEEK_SET
+	whence := io.SeekStart
+	var startByte int64 = 0
 	if resp.bytesResumed > 0 {
-		whence = os.SEEK_END
+		whence = io.SeekEnd
+	} else if byteRange != "" {
+		// sample byte range string: "bytes=262144000-272629759"
+		byteRanges := strings.Split(byteRange, "=")
+		byteRanges = strings.Split(byteRanges[1], "-")
+
+		startByte, _ = strconv.ParseInt(byteRanges[0], 10, 64)
 	}
-	_, resp.err = f.Seek(0, whence)
+	_, resp.err = f.Seek(startByte, whence)
 	if resp.err != nil {
 		return c.closeResponse
 	}
