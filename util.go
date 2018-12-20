@@ -45,16 +45,23 @@ func mkdirp(path string) error {
 	return nil
 }
 
-// guessFilename returns a filename for the given http.Response. If none can be
-// determined ErrNoFilename is returned.
+// guessFilename returns a filename for the given http.Response.
 func guessFilename(resp *http.Response) (string, error) {
 	filename := resp.Request.URL.Path
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
-		if _, params, err := mime.ParseMediaType(cd); err == nil {
-			filename = params["filename"]
+		if _, params, err := mime.ParseMediaType(cd); err == nil && params["filename"] != "" {
+			if hFilename, err := normalizeFilename(params["filename"]); err == nil {
+				return hFilename, nil
+			}
 		}
 	}
 
+	return normalizeFilename(filename)
+}
+
+// normalizeFilename sanitizes and strips filename from unnecessary symbols.
+// If none can be determined ErrNoFilename is returned.
+func normalizeFilename(filename string) (string, error) {
 	// sanitize
 	if filename == "" || strings.HasSuffix(filename, "/") || strings.Contains(filename, "\x00") {
 		return "", ErrNoFilename
