@@ -32,7 +32,7 @@ type Client struct {
 	// to the transfer progress statistics. The BufferSize of each request can
 	// be overridden on each Request object. Default: 32KB.
 	BufferSize int
-	GetReader  func(io.Reader) io.Reader
+	GetReader  func(io.Reader) (io.Reader, error)
 }
 
 // NewClient returns a new file download Client, using default configuration.
@@ -44,8 +44,8 @@ func NewClient() *Client {
 				Proxy: http.ProxyFromEnvironment,
 			},
 		},
-		GetReader: func(r io.Reader) io.Reader {
-			return r
+		GetReader: func(r io.Reader) (io.Reader, error) {
+			return r, nil
 		},
 	}
 }
@@ -430,11 +430,17 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		resp.bufferSize = 32 * 1024
 	}
 	b := make([]byte, resp.bufferSize)
+	r, err := c.GetReader(resp.HTTPResponse.Body)
+	if err != nil {
+		resp.err = err
+		return c.closeResponse
+	}
+
 	resp.transfer = newTransfer(
 		resp.Request.Context(),
 		resp.Request.RateLimiter,
 		resp.writer,
-		c.GetReader(resp.HTTPResponse.Body),
+		r,
 		b)
 
 	// next step is copyFile, but this will be called later in another goroutine
