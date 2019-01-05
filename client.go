@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,7 +31,6 @@ type Client struct {
 	// to the transfer progress statistics. The BufferSize of each request can
 	// be overridden on each Request object. Default: 32KB.
 	BufferSize int
-	GetReader  func(io.Reader) (io.Reader, error)
 }
 
 // NewClient returns a new file download Client, using default configuration.
@@ -43,9 +41,6 @@ func NewClient() *Client {
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
 			},
-		},
-		GetReader: func(r io.Reader) (io.Reader, error) {
-			return r, nil
 		},
 	}
 }
@@ -430,7 +425,8 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		resp.bufferSize = 32 * 1024
 	}
 	b := make([]byte, resp.bufferSize)
-	r, err := c.GetReader(resp.HTTPResponse.Body)
+
+	r, err := resp.Request.GetReader(resp.HTTPResponse.Body)
 	if err != nil {
 		resp.err = err
 		return c.closeResponse

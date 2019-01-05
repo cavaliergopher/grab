@@ -3,6 +3,7 @@ package grab
 import (
 	"context"
 	"hash"
+	"io"
 	"net/http"
 	"net/url"
 )
@@ -101,6 +102,8 @@ type Request struct {
 
 	// Context for cancellation and timeout - set via WithContext
 	ctx context.Context
+
+	GetReader func(io.Reader) (io.Reader, error)
 }
 
 // NewRequest returns a new file transfer Request suitable for use with
@@ -116,6 +119,9 @@ func NewRequest(dst, urlStr string) (*Request, error) {
 	return &Request{
 		HTTPRequest: req,
 		Filename:    dst,
+		GetReader: func(r io.Reader) (io.Reader, error) {
+			return r, nil
+		},
 	}, nil
 }
 
