@@ -351,13 +351,16 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 		panic("Response.HTTPResponse is not ready")
 	}
 
+	size := resp.HTTPResponse.ContentLength
+	if size <= 0 {
+		size = resp.Request.Size
+	}
+
 	// check expected size
-	resp.Size = resp.bytesResumed + resp.HTTPResponse.ContentLength
-	if resp.HTTPResponse.ContentLength > 0 && resp.Request.Size > 0 {
-		if resp.Request.Size != resp.Size {
-			resp.err = ErrBadLength
-			return c.closeResponse
-		}
+	resp.Size = resp.bytesResumed + size
+	if size > 0 && resp.Request.Size > 0 && resp.Request.Size != resp.Size {
+		resp.err = ErrBadLength
+		return c.closeResponse
 	}
 
 	// check filename
