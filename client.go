@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/btcsuite/go-socks/socks"
 )
 
 // A Client is a file download client.
@@ -45,9 +47,36 @@ func NewClient() *Client {
 	}
 }
 
+// NewClientWithProxy returns a new file download Client
+// with proxy support.
+func NewClientWithProxy(proxy *socks.Proxy) *Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+	}
+
+	if proxy != nil {
+		transport.Dial = proxy.Dial
+	}
+
+	client := &Client{
+		UserAgent: "grab",
+		HTTPClient: &http.Client{
+			Transport: transport,
+		},
+	}
+
+	return client
+}
+
 // DefaultClient is the default client and is used by all Get convenience
 // functions.
 var DefaultClient = NewClient()
+
+// SetDefaultClient allows you to setup the default client with a socks5
+// proxy.
+func SetDefaultClient(proxy *socks.Proxy) {
+	DefaultClient = NewClientWithProxy(proxy)
+}
 
 // Do sends a file transfer request and returns a file transfer response,
 // following policy (e.g. redirects, cookies, auth) as configured on the
