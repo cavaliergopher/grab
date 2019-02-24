@@ -72,9 +72,9 @@ func NewClientWithProxy(proxy *socks.Proxy) *Client {
 // functions.
 var DefaultClient = NewClient()
 
-// SetDefaultClient allows you to setup the default client with a socks5
-// proxy.
-func SetDefaultClient(proxy *socks.Proxy) {
+// SetDefaultClientWithProxy allows you to setup the default client with
+// a socks5 proxy.
+func SetDefaultClientWithProxy(proxy *socks.Proxy) {
 	DefaultClient = NewClientWithProxy(proxy)
 }
 
