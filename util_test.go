@@ -16,6 +16,7 @@ func TestURLFilenames(t *testing.T) {
 			"http://test.com/deep/path/filename",
 			"http://test.com/filename?with=args",
 			"http://test.com/filename#with-fragment",
+			"http://test.com/filename?with=args&and#with-fragment",
 		}
 
 		for _, tc := range testCases {
