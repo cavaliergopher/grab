@@ -3,9 +3,10 @@ package grab
 import (
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"os"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -81,9 +82,8 @@ type Response struct {
 	transfer *transfer
 
 	// bytesPerSecond specifies the number of bytes that have been transferred in
-	// the last 1-second window.
-	bytesPerSecond   float64
-	bytesPerSecondMu sync.Mutex
+	// the last 1-second window (stored as float64).
+	bytesPerSecond uint64
 
 	// bufferSize specifies the size in bytes of the transfer buffer.
 	bufferSize int
@@ -139,9 +139,7 @@ func (c *Response) BytesPerSecond() float64 {
 	if c.IsComplete() {
 		return float64(c.transfer.N()) / c.Duration().Seconds()
 	}
-	c.bytesPerSecondMu.Lock()
-	defer c.bytesPerSecondMu.Unlock()
-	return c.bytesPerSecond
+	return math.Float64frombits(atomic.LoadUint64(&c.bytesPerSecond))
 }
 
 // Progress returns the ratio of total bytes that have been downloaded. Multiply
@@ -202,9 +200,8 @@ func (c *Response) watchBps() {
 			bs := cur - prev
 			prev = cur
 
-			c.bytesPerSecondMu.Lock()
-			c.bytesPerSecond = float64(bs) / d.Seconds()
-			c.bytesPerSecondMu.Unlock()
+			bps := float64(bs) / d.Seconds()
+			atomic.StoreUint64(&c.bytesPerSecond, math.Float64bits(bps))
 		}
 	}
 }
