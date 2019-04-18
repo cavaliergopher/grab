@@ -39,12 +39,6 @@ func (c *transfer) copy() (written int64, err error) {
 		default:
 			// keep working
 		}
-		if c.lim != nil {
-			err = c.lim.WaitN(c.ctx, len(c.b))
-			if err != nil {
-				return
-			}
-		}
 		nr, er := c.r.Read(c.b)
 		if nr > 0 {
 			nw, ew := c.w.Write(c.b[0:nr])
@@ -59,6 +53,13 @@ func (c *transfer) copy() (written int64, err error) {
 			if nr != nw {
 				err = io.ErrShortWrite
 				break
+			}
+			// wait for rate limiter
+			if c.lim != nil {
+				err = c.lim.WaitN(c.ctx, nr)
+				if err != nil {
+					return
+				}
 			}
 		}
 		if er != nil {
