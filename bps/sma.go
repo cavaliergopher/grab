@@ -12,6 +12,11 @@ import (
 // the sample buffer. When a new sample is added, the oldest sample is dropped
 // if the sample count exceeds maxSamples.
 //
+// The gauge does not account for any latency in arrival time of new samples or
+// the desired window size. Any variance in the arrival of samples will result
+// in a BPS measurement that is correct for the submitted samples, but over a
+// varying time window.
+//
 // maxSamples should be equal to 1 + (window size / sampling interval) where
 // window size is the number of seconds over which the moving average is
 // smoothed and sampling interval is the number of seconds between each sample.
