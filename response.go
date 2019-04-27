@@ -3,10 +3,8 @@ package grab
 import (
 	"context"
 	"io"
-	"math"
 	"net/http"
 	"os"
-	"sync/atomic"
 	"time"
 )
 
@@ -81,10 +79,6 @@ type Response struct {
 	// file, tracking progress and allowing for cancelation.
 	transfer *transfer
 
-	// bytesPerSecond specifies the number of bytes that have been transferred in
-	// the last 1-second window (stored as float64).
-	bytesPerSecond uint64
-
 	// bufferSize specifies the size in bytes of the transfer buffer.
 	bufferSize int
 
@@ -132,14 +126,14 @@ func (c *Response) BytesComplete() int64 {
 	return c.bytesResumed + c.transfer.N()
 }
 
-// BytesPerSecond returns the number of bytes transferred in the last second. If
-// the download is already complete, the average bytes/sec for the life of the
-// download is returned.
+// BytesPerSecond returns the number of bytes per second transferred using a
+// simple moving average of the last five seconds. If the download is already
+// complete, the average bytes/sec for the life of the download is returned.
 func (c *Response) BytesPerSecond() float64 {
 	if c.IsComplete() {
 		return float64(c.transfer.N()) / c.Duration().Seconds()
 	}
-	return math.Float64frombits(atomic.LoadUint64(&c.bytesPerSecond))
+	return c.transfer.BPS()
 }
 
 // Progress returns the ratio of total bytes that have been downloaded. Multiply
@@ -171,39 +165,12 @@ func (c *Response) ETA() time.Time {
 		return c.End
 	}
 	bt := c.BytesComplete()
-	bps := c.BytesPerSecond()
+	bps := c.transfer.BPS()
 	if bps == 0 {
 		return time.Time{}
 	}
 	secs := float64(c.Size-bt) / bps
 	return time.Now().Add(time.Duration(secs) * time.Second)
-}
-
-// watchBps watches the progress of a transfer and maintains statistics.
-func (c *Response) watchBps() {
-	var prev int64
-	then := c.Start
-
-	t := time.NewTicker(time.Second)
-	defer t.Stop()
-
-	for {
-		select {
-		case <-c.Done:
-			return
-
-		case now := <-t.C:
-			d := now.Sub(then)
-			then = now
-
-			cur := c.transfer.N()
-			bs := cur - prev
-			prev = cur
-
-			bps := float64(bs) / d.Seconds()
-			atomic.StoreUint64(&c.bytesPerSecond, math.Float64bits(bps))
-		}
-	}
 }
 
 func (c *Response) requestMethod() string {

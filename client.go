@@ -453,7 +453,6 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	if resp.transfer == nil {
 		panic("developer error: Response.transfer is not initialized")
 	}
-	go resp.watchBps()
 	_, resp.err = resp.transfer.copy()
 	if resp.err != nil {
 		return c.closeResponse
