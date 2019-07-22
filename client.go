@@ -335,6 +335,8 @@ func (c *Client) getRequest(resp *Response) stateFunc {
 		return c.closeResponse
 	}
 
+	// TODO: check Content-Range
+
 	// check status code
 	if !resp.Request.IgnoreBadStatusCodes {
 		if resp.HTTPResponse.StatusCode < 200 || resp.HTTPResponse.StatusCode > 299 {

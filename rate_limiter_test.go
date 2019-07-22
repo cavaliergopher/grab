@@ -2,11 +2,12 @@ package grab
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/cavaliercoder/grab/grabtest"
 )
 
 // testRateLimiter is a naive rate limiter that limits throughput to r tokens
@@ -33,30 +34,25 @@ func TestRateLimiter(t *testing.T) {
 	filename := ".testRateLimiter"
 	defer os.Remove(filename)
 
-	req, err := NewRequest(filename, fmt.Sprintf("%s?size=%d", ts.URL, filesize))
-	if err != nil {
-		t.Fatal(err)
-	}
+	grabtest.WithTestServer(t, func(url string) {
+		// limit to 512bps
+		lim := &testRateLimiter{r: 512}
+		req := mustNewRequest(filename, url)
 
-	// ensure multiple trips to the rate limiter by downloading 8 bytes at a time
-	req.BufferSize = 8
+		// ensure multiple trips to the rate limiter by downloading 8 bytes at a time
+		req.BufferSize = 8
+		req.RateLimiter = lim
 
-	// limit to 512bps
-	lim := &testRateLimiter{r: 512}
-	req.RateLimiter = lim
-
-	resp := DefaultClient.Do(req)
-	if err = resp.Err(); err != nil {
-		t.Fatal(err)
-	}
-	testComplete(t, resp)
-	if lim.n != filesize {
-		t.Errorf("expected %d bytes to pass through limiter, got %d", filesize, lim.n)
-	}
-	if resp.Duration().Seconds() < 0.25 {
-		// BUG: this test can pass if the transfer was slow for unrelated reasons
-		t.Errorf("expected transfer to take >250ms, took %v", resp.Duration())
-	}
+		resp := mustDo(req)
+		testComplete(t, resp)
+		if lim.n != filesize {
+			t.Errorf("expected %d bytes to pass through limiter, got %d", filesize, lim.n)
+		}
+		if resp.Duration().Seconds() < 0.25 {
+			// BUG: this test can pass if the transfer was slow for unrelated reasons
+			t.Errorf("expected transfer to take >250ms, took %v", resp.Duration())
+		}
+	}, grabtest.ContentLength(filesize))
 }
 
 func ExampleRateLimiter() {

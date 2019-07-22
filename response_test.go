@@ -1,9 +1,11 @@
 package grab
 
 import (
-	"fmt"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/cavaliercoder/grab/grabtest"
 )
 
 // testComplete validates that a completed Response has all the desired fields.
@@ -47,31 +49,36 @@ func TestResponseProgress(t *testing.T) {
 	filename := ".testResponseProgress"
 	defer os.Remove(filename)
 
-	sleep := 300            // ms
-	size := int64(1024 * 8) // bytes
+	sleep := 300 * time.Millisecond
+	size := 1024 * 8 // bytes
 
-	// request a slow transfer
-	req, _ := NewRequest(filename, fmt.Sprintf("%s?sleep=%v&size=%v", ts.URL, sleep, size))
-	resp := DefaultClient.Do(req)
+	grabtest.WithTestServer(t, func(url string) {
+		// request a slow transfer
+		req := mustNewRequest(filename, url)
+		resp := DefaultClient.Do(req)
 
-	// make sure transfer has not started
-	if resp.IsComplete() {
-		t.Errorf("Transfer should not have started")
-	}
+		// make sure transfer has not started
+		if resp.IsComplete() {
+			t.Errorf("Transfer should not have started")
+		}
 
-	if p := resp.Progress(); p != 0 {
-		t.Errorf("Transfer should not have started yet but progress is %v", p)
-	}
+		if p := resp.Progress(); p != 0 {
+			t.Errorf("Transfer should not have started yet but progress is %v", p)
+		}
 
-	// wait for transfer to complete
-	<-resp.Done
+		// wait for transfer to complete
+		<-resp.Done
 
-	// make sure transfer is complete
-	if p := resp.Progress(); p != 1 {
-		t.Errorf("Transfer is complete but progress is %v", p)
-	}
+		// make sure transfer is complete
+		if p := resp.Progress(); p != 1 {
+			t.Errorf("Transfer is complete but progress is %v", p)
+		}
 
-	if s := resp.BytesComplete(); s != size {
-		t.Errorf("Expected to transfer %v bytes, got %v", size, s)
-	}
+		if s := resp.BytesComplete(); s != int64(size) {
+			t.Errorf("Expected to transfer %v bytes, got %v", size, s)
+		}
+	},
+		grabtest.TimeToFirstByte(sleep),
+		grabtest.ContentLength(size),
+	)
 }
