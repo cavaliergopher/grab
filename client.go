@@ -265,7 +265,7 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 		return c.closeResponse
 	}
 	if resp.Filename == "" {
-		panic("filename not set")
+		panic("grab: developer error: filename not set")
 	}
 	req := resp.Request
 
@@ -350,7 +350,7 @@ func (c *Client) getRequest(resp *Response) stateFunc {
 
 func (c *Client) readResponse(resp *Response) stateFunc {
 	if resp.HTTPResponse == nil {
-		panic("Response.HTTPResponse is not ready")
+		panic("grab: developer error: Response.HTTPResponse is nil")
 	}
 
 	// check expected size
@@ -453,7 +453,7 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	}
 
 	if resp.transfer == nil {
-		panic("developer error: Response.transfer is not initialized")
+		panic("grab: developer error: Response.transfer is nil")
 	}
 	_, resp.err = resp.transfer.copy()
 	if resp.err != nil {
@@ -490,7 +490,7 @@ func closeWriter(resp *Response) {
 // close finalizes the Response
 func (c *Client) closeResponse(resp *Response) stateFunc {
 	if resp.IsComplete() {
-		panic("response already closed")
+		panic("grab: developer error: response already closed")
 	}
 
 	resp.fi = nil

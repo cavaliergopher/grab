@@ -40,7 +40,7 @@ func mkdirp(path string) error {
 			return fmt.Errorf("error creating destination directory: %v", err)
 		}
 	} else if !fi.IsDir() {
-		panic("destination path is not directory")
+		panic("grab: developer error: destination path is not directory")
 	}
 	return nil
 }
