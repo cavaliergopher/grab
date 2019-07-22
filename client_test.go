@@ -1,6 +1,7 @@
 package grab
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
@@ -12,6 +13,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -122,7 +124,7 @@ func TestChecksums(t *testing.T) {
 
 			grabtest.WithTestServer(t, func(url string) {
 				req := mustNewRequest(filename, url)
-				req.SetChecksum(test.hash, mustHexDecodeString(test.sum), true)
+				req.SetChecksum(test.hash, grabtest.MustHexDecodeString(test.sum), true)
 
 				resp := DefaultClient.Do(req)
 				err := resp.Err()
@@ -202,7 +204,7 @@ func TestContentLength(t *testing.T) {
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
-	sum := mustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
+	sum := grabtest.DefaultHandlerSHA256ChecksumBytes //grabtest.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
 	filename := ".testAutoResume"
 
 	defer os.Remove(filename)
@@ -359,7 +361,7 @@ func TestSkipExisting(t *testing.T) {
 func TestBatch(t *testing.T) {
 	tests := 32
 	size := 32768
-	sum := mustHexDecodeString("e11360251d1173650cdcd20f111d8f1ca2e412f572e8b36a4dc067121c1799b8")
+	sum := grabtest.MustHexDecodeString("e11360251d1173650cdcd20f111d8f1ca2e412f572e8b36a4dc067121c1799b8")
 
 	// test with 4 workers and with one per request
 	grabtest.WithTestServer(t, func(url string) {
@@ -724,7 +726,7 @@ func TestMissingContentLength(t *testing.T) {
 		req := mustNewRequest(".testMissingContentLength", url)
 		req.SetChecksum(
 			md5.New(),
-			mustHexDecodeString("c35cc7d8d91728a0cb052831bc4ef372"),
+			grabtest.DefaultHandlerMD5ChecksumBytes,
 			false)
 		resp := DefaultClient.Do(req)
 
@@ -751,4 +753,79 @@ func TestMissingContentLength(t *testing.T) {
 			t.Errorf("expected response size: %d, got: %d", expectSize, resp.Size())
 		}
 	}, opts...)
+}
+
+func TestNoStore(t *testing.T) {
+	filename := ".testSubdir/testNoStore"
+	t.Run("DefaultCase", func(t *testing.T) {
+		grabtest.WithTestServer(t, func(url string) {
+			req := mustNewRequest(filename, url)
+			req.NoStore = true
+			req.SetChecksum(md5.New(), grabtest.DefaultHandlerMD5ChecksumBytes, true)
+			resp := mustDo(req)
+
+			// ensure Response.Bytes is correct and can be reread
+			b, err := resp.Bytes()
+			if err != nil {
+				panic(err)
+			}
+			grabtest.AssertSHA256Sum(
+				t,
+				grabtest.DefaultHandlerSHA256ChecksumBytes,
+				bytes.NewReader(b),
+			)
+
+			// ensure Response.Open stream is correct and can be reread
+			r, err := resp.Open()
+			if err != nil {
+				panic(err)
+			}
+			defer r.Close()
+			grabtest.AssertSHA256Sum(
+				t,
+				grabtest.DefaultHandlerSHA256ChecksumBytes,
+				r,
+			)
+
+			// Response.Filename should still be set
+			if resp.Filename != filename {
+				t.Errorf("expected Response.Filename: %s, got: %s", filename, resp.Filename)
+			}
+
+			// ensure no files were written
+			paths := []string{
+				filename,
+				filepath.Base(filename),
+				filepath.Dir(filename),
+				resp.Filename,
+				filepath.Base(resp.Filename),
+				filepath.Dir(resp.Filename),
+			}
+			for _, path := range paths {
+				_, err := os.Stat(path)
+				if !os.IsNotExist(err) {
+					t.Errorf(
+						"expect error: %v, got: %v, for path: %s",
+						os.ErrNotExist,
+						err,
+						path)
+				}
+			}
+		})
+	})
+
+	t.Run("ChecksumValidation", func(t *testing.T) {
+		grabtest.WithTestServer(t, func(url string) {
+			req := mustNewRequest("", url)
+			req.NoStore = true
+			req.SetChecksum(
+				md5.New(),
+				grabtest.MustHexDecodeString("deadbeefcafebabe"),
+				true)
+			resp := DefaultClient.Do(req)
+			if err := resp.Err(); err != ErrBadChecksum {
+				t.Errorf("expected error: %v, got: %v", ErrBadChecksum, err)
+			}
+		})
+	})
 }

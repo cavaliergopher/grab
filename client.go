@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -190,7 +191,7 @@ func (c *Client) run(resp *Response, f stateFunc) {
 //
 // If an error occurs, the next stateFunc is closeResponse.
 func (c *Client) statFileInfo(resp *Response) stateFunc {
-	if resp.Filename == "" {
+	if resp.Request.NoStore || resp.Filename == "" {
 		return c.headRequest
 	}
 	fi, err := os.Stat(resp.Filename)
@@ -281,15 +282,17 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	}
 	req := resp.Request
 
-	// compare checksum
+	// compute checksum
 	var sum []byte
-	sum, resp.err = checksum(req.Context(), resp.Filename, req.hash)
+	sum, resp.err = resp.checksumUnsafe()
 	if resp.err != nil {
 		return c.closeResponse
 	}
+
+	// compare checksum
 	if !bytes.Equal(sum, req.checksum) {
 		resp.err = ErrBadChecksum
-		if req.deleteOnError {
+		if !resp.Request.NoStore && req.deleteOnError {
 			if err := os.Remove(resp.Filename); err != nil {
 				// err should be os.PathError and include file path
 				resp.err = fmt.Errorf(
@@ -387,7 +390,7 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 		resp.Filename = filepath.Join(resp.Request.Filename, filename)
 	}
 
-	if resp.requestMethod() == "HEAD" {
+	if !resp.Request.NoStore && resp.requestMethod() == "HEAD" {
 		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
 			resp.CanResume = true
 		}
@@ -401,39 +404,43 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 //
 // Requires that Response.Filename and resp.DidResume are already be set.
 func (c *Client) openWriter(resp *Response) stateFunc {
-	if !resp.Request.NoCreateDirectories {
+	if !resp.Request.NoStore && !resp.Request.NoCreateDirectories {
 		resp.err = mkdirp(resp.Filename)
 		if resp.err != nil {
 			return c.closeResponse
 		}
 	}
 
-	// compute write flags
-	flag := os.O_CREATE | os.O_WRONLY
-	if resp.fi != nil {
-		if resp.DidResume {
-			flag = os.O_APPEND | os.O_WRONLY
-		} else {
-			flag = os.O_TRUNC | os.O_WRONLY
+	if resp.Request.NoStore {
+		resp.writer = &resp.storeBuffer
+	} else {
+		// compute write flags
+		flag := os.O_CREATE | os.O_WRONLY
+		if resp.fi != nil {
+			if resp.DidResume {
+				flag = os.O_APPEND | os.O_WRONLY
+			} else {
+				flag = os.O_TRUNC | os.O_WRONLY
+			}
 		}
-	}
 
-	// open file
-	f, err := os.OpenFile(resp.Filename, flag, 0644)
-	if err != nil {
-		resp.err = err
-		return c.closeResponse
-	}
-	resp.writer = f
+		// open file
+		f, err := os.OpenFile(resp.Filename, flag, 0644)
+		if err != nil {
+			resp.err = err
+			return c.closeResponse
+		}
+		resp.writer = f
 
-	// seek to start or end
-	whence := os.SEEK_SET
-	if resp.bytesResumed > 0 {
-		whence = os.SEEK_END
-	}
-	_, resp.err = f.Seek(0, whence)
-	if resp.err != nil {
-		return c.closeResponse
+		// seek to start or end
+		whence := os.SEEK_SET
+		if resp.bytesResumed > 0 {
+			whence = os.SEEK_END
+		}
+		_, resp.err = f.Seek(0, whence)
+		if resp.err != nil {
+			return c.closeResponse
+		}
 	}
 
 	// init transfer
@@ -477,7 +484,7 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	closeWriter(resp)
 
 	// set file timestamp
-	if !resp.Request.IgnoreRemoteTime {
+	if !resp.Request.NoStore && !resp.Request.IgnoreRemoteTime {
 		resp.err = setLastModified(resp.HTTPResponse, resp.Filename)
 		if resp.err != nil {
 			return c.closeResponse
@@ -506,10 +513,10 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 }
 
 func closeWriter(resp *Response) {
-	if resp.writer != nil {
-		resp.writer.Close()
-		resp.writer = nil
+	if closer, ok := resp.writer.(io.Closer); ok {
+		closer.Close()
 	}
+	resp.writer = nil
 }
 
 // close finalizes the Response

@@ -1,6 +1,7 @@
 package grab
 
 import (
+	"bytes"
 	"os"
 	"testing"
 	"time"
@@ -81,4 +82,37 @@ func TestResponseProgress(t *testing.T) {
 		grabtest.TimeToFirstByte(sleep),
 		grabtest.ContentLength(size),
 	)
+}
+
+func TestResponseOpen(t *testing.T) {
+	grabtest.WithTestServer(t, func(url string) {
+		resp := mustDo(mustNewRequest("", url+"/someFilename"))
+		f, err := resp.Open()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer func() {
+			if err := f.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		grabtest.AssertSHA256Sum(t, grabtest.DefaultHandlerSHA256ChecksumBytes, f)
+	})
+}
+
+func TestResponseBytes(t *testing.T) {
+	grabtest.WithTestServer(t, func(url string) {
+		resp := mustDo(mustNewRequest("", url+"/someFilename"))
+		b, err := resp.Bytes()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		grabtest.AssertSHA256Sum(
+			t,
+			grabtest.DefaultHandlerSHA256ChecksumBytes,
+			bytes.NewReader(b),
+		)
+	})
 }

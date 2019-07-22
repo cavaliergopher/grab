@@ -1,9 +1,7 @@
 package grab
 
 import (
-	"context"
 	"fmt"
-	"hash"
 	"mime"
 	"net/http"
 	"os"
@@ -47,6 +45,8 @@ func mkdirp(path string) error {
 
 // guessFilename returns a filename for the given http.Response. If none can be
 // determined ErrNoFilename is returned.
+//
+// TODO: NoStore operations should not require a filename
 func guessFilename(resp *http.Response) (string, error) {
 	filename := resp.Request.URL.Path
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
@@ -66,24 +66,4 @@ func guessFilename(resp *http.Response) (string, error) {
 	}
 
 	return filename, nil
-}
-
-// checksum returns a hash of the given file, using the given hash algorithm.
-func checksum(ctx context.Context, filename string, h hash.Hash) (b []byte, err error) {
-	var f *os.File
-	f, err = os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer func() {
-		err = f.Close()
-	}()
-
-	t := newTransfer(ctx, nil, h, f, nil)
-	if _, err = t.copy(); err != nil {
-		return
-	}
-
-	b = h.Sum(nil)
-	return
 }

@@ -1,8 +1,10 @@
 package grab
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"sync/atomic"
@@ -70,7 +72,11 @@ type Response struct {
 
 	// writer is the file handle used to write the downloaded file to local
 	// storage
-	writer io.WriteCloser
+	writer io.Writer
+
+	// storeBuffer receives the contents of the transfer if Request.NoStore is
+	// enabled.
+	storeBuffer bytes.Buffer
 
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
@@ -182,11 +188,66 @@ func (c *Response) ETA() time.Time {
 	return time.Now().Add(time.Duration(secs) * time.Second)
 }
 
+// Open blocks the calling goroutine until the underlying file transfer is
+// completed and then opens the transferred file for reading. If Request.NoStore
+// was enabled, the reader will read from memory.
+//
+// If an error occurred during the transfer, it will be returned.
+//
+// It is the callers responsibility to close the returned file handle.
+func (c *Response) Open() (io.ReadCloser, error) {
+	if err := c.Err(); err != nil {
+		return nil, err
+	}
+	return c.openUnsafe()
+}
+
+func (c *Response) openUnsafe() (io.ReadCloser, error) {
+	if c.Request.NoStore {
+		return ioutil.NopCloser(bytes.NewReader(c.storeBuffer.Bytes())), nil
+	}
+	return os.Open(c.Filename)
+}
+
+// Bytes blocks the calling goroutine until the underlying file transfer is
+// completed and then reads all bytes from the completed tranafer. If
+// Request.NoStore was enabled, the bytes will be read from memory.
+//
+// If an error occurred during the transfer, it will be returned.
+func (c *Response) Bytes() ([]byte, error) {
+	if err := c.Err(); err != nil {
+		return nil, err
+	}
+	if c.Request.NoStore {
+		return c.storeBuffer.Bytes(), nil
+	}
+	f, err := c.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return ioutil.ReadAll(f)
+}
+
 func (c *Response) requestMethod() string {
 	if c == nil || c.HTTPResponse == nil || c.HTTPResponse.Request == nil {
 		return ""
 	}
 	return c.HTTPResponse.Request.Method
+}
+
+func (c *Response) checksumUnsafe() ([]byte, error) {
+	f, err := c.openUnsafe()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	t := newTransfer(c.Request.Context(), nil, c.Request.hash, f, nil)
+	if _, err = t.copy(); err != nil {
+		return nil, err
+	}
+	sum := c.Request.hash.Sum(nil)
+	return sum, nil
 }
 
 func (c *Response) closeResponseBody() error {

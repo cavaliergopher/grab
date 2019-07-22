@@ -1,6 +1,8 @@
 package grabtest
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -82,4 +84,21 @@ func MustHTTPDoWithClose(req *http.Request) *http.Response {
 		panic(err)
 	}
 	return resp
+}
+
+func AssertSHA256Sum(t *testing.T, sum []byte, r io.Reader) (ok bool) {
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		panic(err)
+	}
+	computed := h.Sum(nil)
+	ok = bytes.Equal(sum, computed)
+	if !ok {
+		t.Errorf(
+			"expected checksum: %s, got: %s",
+			MustHexEncodeString(sum),
+			MustHexEncodeString(computed),
+		)
+	}
+	return
 }

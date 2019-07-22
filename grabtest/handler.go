@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+var (
+	DefaultHandlerContentLength       = 1 << 20
+	DefaultHandlerMD5Checksum         = "c35cc7d8d91728a0cb052831bc4ef372"
+	DefaultHandlerMD5ChecksumBytes    = MustHexDecodeString(DefaultHandlerMD5Checksum)
+	DefaultHandlerSHA256Checksum      = "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83"
+	DefaultHandlerSHA256ChecksumBytes = MustHexDecodeString(DefaultHandlerSHA256Checksum)
+)
+
 type StatusCodeFunc func(req *http.Request) int
 
 type handler struct {
@@ -27,7 +35,7 @@ func NewHandler(options ...HandlerOption) (http.Handler, error) {
 	h := &handler{
 		statusCodeFunc:  func(req *http.Request) int { return http.StatusOK },
 		methodWhitelist: []string{"GET", "HEAD"},
-		contentLength:   1048576,
+		contentLength:   DefaultHandlerContentLength,
 		acceptRanges:    true,
 	}
 	for _, option := range options {

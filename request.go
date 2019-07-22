@@ -51,6 +51,11 @@ type Request struct {
 	// completed in full, it will not be restarted.
 	NoResume bool
 
+	// NoStore specifies that grab should not write to the local file system.
+	// Instead, the download will be stored in memory and accessible only via
+	// Response.Open or Response.Bytes.
+	NoStore bool
+
 	// NoCreateDirectories specifies that any missing directories in the given
 	// Filename path should not be created automatically, if they do not already
 	// exist.
