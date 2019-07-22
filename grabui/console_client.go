@@ -102,7 +102,7 @@ func (c *ConsoleClient) refresh() {
 				fmt.Printf("Finished %s %s / %s (%d%%)\n",
 					resp.Filename,
 					byteString(resp.BytesComplete()),
-					byteString(resp.Size),
+					byteString(resp.Size()),
 					int(100*resp.Progress()))
 			}
 			c.responses[i] = nil
@@ -116,7 +116,7 @@ func (c *ConsoleClient) refresh() {
 			fmt.Printf("Downloading %s %s / %s (%d%%) - %s ETA: %s \033[K\n",
 				resp.Filename,
 				byteString(resp.BytesComplete()),
-				byteString(resp.Size),
+				byteString(resp.Size()),
 				int(100*resp.Progress()),
 				bpsString(resp.BytesPerSecond()),
 				etaString(resp.ETA()))
