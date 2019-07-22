@@ -1,6 +1,7 @@
 package grab
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -71,4 +72,13 @@ func mustDo(req *Request) *Response {
 		panic(err)
 	}
 	return resp
+}
+
+func mustHexDecodeString(s string) (b []byte) {
+	var err error
+	b, err = hex.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return
 }

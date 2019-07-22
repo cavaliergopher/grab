@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,7 +31,7 @@ type Response struct {
 	Filename string
 
 	// Size specifies the total expected size of the file transfer.
-	Size int64
+	sizeUnsafe int64
 
 	// Start specifies the time at which the file transfer started.
 	Start time.Time
@@ -119,6 +120,13 @@ func (c *Response) Err() error {
 	return c.err
 }
 
+// Size returns the size of the file transfer. If the remote server does not
+// specify the total size and the transfer is incomplete, the return value is
+// -1.
+func (c *Response) Size() int64 {
+	return atomic.LoadInt64(&c.sizeUnsafe)
+}
+
 // BytesComplete returns the total number of bytes which have been copied to
 // the destination, including any bytes that were resumed from a previous
 // download.
@@ -139,10 +147,11 @@ func (c *Response) BytesPerSecond() float64 {
 // Progress returns the ratio of total bytes that have been downloaded. Multiply
 // the returned value by 100 to return the percentage completed.
 func (c *Response) Progress() float64 {
-	if c.Size == 0 {
+	size := c.Size()
+	if size <= 0 {
 		return 0
 	}
-	return float64(c.BytesComplete()) / float64(c.Size)
+	return float64(c.BytesComplete()) / float64(size)
 }
 
 // Duration returns the duration of a file transfer. If the transfer is in
@@ -169,7 +178,7 @@ func (c *Response) ETA() time.Time {
 	if bps == 0 {
 		return time.Time{}
 	}
-	secs := float64(c.Size-bt) / bps
+	secs := float64(c.Size()-bt) / bps
 	return time.Now().Add(time.Duration(secs) * time.Second)
 }
 

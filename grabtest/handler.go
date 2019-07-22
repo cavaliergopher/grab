@@ -14,6 +14,7 @@ type StatusCodeFunc func(req *http.Request) int
 type handler struct {
 	statusCodeFunc     StatusCodeFunc
 	methodWhitelist    []string
+	headerBlacklist    []string
 	contentLength      int
 	acceptRanges       bool
 	attachmentFilename string
@@ -112,6 +113,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", h.contentLength-offset))
 
+	// apply header blacklist
+	for _, key := range h.headerBlacklist {
+		w.Header().Del(key)
+	}
+
 	// send header and status code
 	w.WriteHeader(h.statusCodeFunc(r))
 
@@ -119,13 +125,26 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		// use buffered io to reduce overhead on the reader
 		bw := bufio.NewWriterSize(w, 4096)
-		for i := offset; i < h.contentLength; i++ {
+		for i := offset; !isRequestClosed(r) && i < h.contentLength; i++ {
 			bw.Write([]byte{byte(i)})
 			if h.rateLimiter != nil {
 				<-h.rateLimiter.C
 			}
 		}
-		bw.Flush()
+		if !isRequestClosed(r) {
+			bw.Flush()
+		}
+	}
+}
+
+// isRequestClosed returns true if the client request has been canceled.
+func isRequestClosed(r *http.Request) bool {
+	ctx := r.Context()
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 

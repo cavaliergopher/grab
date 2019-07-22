@@ -37,6 +37,22 @@ func TestHandlerMethodWhitelist(t *testing.T) {
 	}
 }
 
+func TestHandlerHeaderBlacklist(t *testing.T) {
+	contentLength := 4096
+	WithTestServer(t, func(url string) {
+		resp := MustHTTPDo(MustHTTPNewRequest("GET", url, nil))
+		defer resp.Body.Close()
+		if resp.ContentLength != -1 {
+			t.Errorf("expected Response.ContentLength: -1, got: %d", resp.ContentLength)
+		}
+		AssertHTTPResponseHeader(t, resp, "Content-Length", "")
+		AssertHTTPResponseBodyLength(t, resp, int64(contentLength))
+	},
+		ContentLength(contentLength),
+		HeaderBlacklist("Content-Length"),
+	)
+}
+
 func TestHandlerStatusCodeFuncs(t *testing.T) {
 	expect := 123
 	WithTestServer(t, func(url string) {

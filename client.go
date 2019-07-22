@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -225,31 +226,39 @@ func (c *Client) validateLocal(resp *Response) stateFunc {
 		return c.closeResponse
 	}
 
-	// determine expected file size
-	size := resp.Request.Size
-	if size == 0 && resp.HTTPResponse != nil {
-		size = resp.HTTPResponse.ContentLength
+	// determine target file size
+	expectedSize := resp.Request.Size
+	if expectedSize == 0 && resp.HTTPResponse != nil {
+		expectedSize = resp.HTTPResponse.ContentLength
 	}
-	if size == 0 {
+
+	if expectedSize == 0 {
+		// size is either actually 0 or unknown
+		// if unknown, we ask the remote server
+		// if known to be 0, we proceed with a GET
 		return c.headRequest
 	}
 
-	if size == resp.fi.Size() {
+	if expectedSize == resp.fi.Size() {
+		// local file matches remote file size - wrap it up
 		resp.DidResume = true
 		resp.bytesResumed = resp.fi.Size()
 		return c.checksumFile
 	}
 
 	if resp.Request.NoResume {
+		// local file should be overwritten
 		return c.getRequest
 	}
 
-	if size < resp.fi.Size() {
+	if expectedSize >= 0 && expectedSize < resp.fi.Size() {
+		// remote size is known, is smaller than local size and we want to resume
 		resp.err = ErrBadLength
 		return c.closeResponse
 	}
 
 	if resp.CanResume {
+		// set resume range on GET request
 		resp.Request.HTTPRequest.Header.Set(
 			"Range",
 			fmt.Sprintf("bytes=%d-", resp.fi.Size()))
@@ -266,6 +275,9 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	}
 	if resp.Filename == "" {
 		panic("grab: developer error: filename not set")
+	}
+	if resp.Size() < 0 {
+		panic("grab: developer error: size unknown")
 	}
 	req := resp.Request
 
@@ -354,9 +366,11 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 	}
 
 	// check expected size
-	resp.Size = resp.bytesResumed + resp.HTTPResponse.ContentLength
-	if resp.HTTPResponse.ContentLength > 0 && resp.Request.Size > 0 {
-		if resp.Request.Size != resp.Size {
+	resp.sizeUnsafe = resp.HTTPResponse.ContentLength
+	if resp.sizeUnsafe >= 0 {
+		// remote size is known
+		resp.sizeUnsafe += resp.bytesResumed
+		if resp.Request.Size > 0 && resp.Request.Size != resp.sizeUnsafe {
 			resp.err = ErrBadLength
 			return c.closeResponse
 		}
@@ -452,19 +466,30 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 		}
 	}
 
+	var bytesCopied int64
 	if resp.transfer == nil {
 		panic("grab: developer error: Response.transfer is nil")
 	}
-	_, resp.err = resp.transfer.copy()
+	bytesCopied, resp.err = resp.transfer.copy()
 	if resp.err != nil {
 		return c.closeResponse
 	}
 	closeWriter(resp)
 
-	// set timestamp
+	// set file timestamp
 	if !resp.Request.IgnoreRemoteTime {
 		resp.err = setLastModified(resp.HTTPResponse, resp.Filename)
 		if resp.err != nil {
+			return c.closeResponse
+		}
+	}
+
+	// update transfer size if previously unknown
+	if resp.Size() < 0 {
+		discoveredSize := resp.bytesResumed + bytesCopied
+		atomic.StoreInt64(&resp.sizeUnsafe, discoveredSize)
+		if resp.Request.Size > 0 && resp.Request.Size != discoveredSize {
+			resp.err = ErrBadLength
 			return c.closeResponse
 		}
 	}

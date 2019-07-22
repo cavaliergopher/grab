@@ -33,6 +33,13 @@ func MethodWhitelist(methods ...string) HandlerOption {
 	}
 }
 
+func HeaderBlacklist(headers ...string) HandlerOption {
+	return func(h *handler) error {
+		h.headerBlacklist = headers
+		return nil
+	}
+}
+
 func ContentLength(n int) HandlerOption {
 	return func(h *handler) error {
 		if n < 0 {

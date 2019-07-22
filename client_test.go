@@ -6,7 +6,6 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -122,9 +121,8 @@ func TestChecksums(t *testing.T) {
 			defer os.Remove(filename)
 
 			grabtest.WithTestServer(t, func(url string) {
-				b, _ := hex.DecodeString(test.sum)
 				req := mustNewRequest(filename, url)
-				req.SetChecksum(test.hash, b, true)
+				req.SetChecksum(test.hash, mustHexDecodeString(test.sum), true)
 
 				resp := DefaultClient.Do(req)
 				err := resp.Err()
@@ -184,8 +182,8 @@ func TestContentLength(t *testing.T) {
 						t.Errorf("error: %v", err)
 					} else if err != nil {
 						panic(err)
-					} else if resp.Size != size {
-						t.Errorf("expected %v bytes, got %v bytes", size, resp.Size)
+					} else if resp.Size() != size {
+						t.Errorf("expected %v bytes, got %v bytes", size, resp.Size())
 					}
 				} else {
 					if err == nil {
@@ -204,7 +202,7 @@ func TestContentLength(t *testing.T) {
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
-	sum, _ := hex.DecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
+	sum := mustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
 	filename := ".testAutoResume"
 
 	defer os.Remove(filename)
@@ -237,7 +235,7 @@ func TestAutoResume(t *testing.T) {
 				t.Errorf("expected ErrBadLength for smaller request, got: %v", err)
 			}
 		},
-			grabtest.ContentLength(size-1),
+			grabtest.ContentLength(size-128),
 		)
 	})
 
@@ -246,26 +244,74 @@ func TestAutoResume(t *testing.T) {
 			req := mustNewRequest(filename, url)
 			req.NoResume = true
 			resp := mustDo(req)
-			if resp.DidResume == true {
+			if resp.DidResume {
 				t.Errorf("expected Response.DidResume to be false")
 			}
 			testComplete(t, resp)
 		},
-			grabtest.ContentLength(size+1),
+			grabtest.ContentLength(size+128),
 		)
 	})
 
 	t.Run("WithNoResumeAndTruncate", func(t *testing.T) {
+		size := size - 128
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
 			req.NoResume = true
 			resp := mustDo(req)
-			if resp.DidResume == true {
+			if resp.DidResume {
 				t.Errorf("expected Response.DidResume to be false")
+			}
+			if v := resp.BytesComplete(); v != int64(size) {
+				t.Errorf("expected Response.BytesComplete: %d, got: %d", size, v)
 			}
 			testComplete(t, resp)
 		},
-			grabtest.ContentLength(size-1),
+			grabtest.ContentLength(size),
+		)
+	})
+
+	t.Run("WithNoContentLengthHeader", func(t *testing.T) {
+		grabtest.WithTestServer(t, func(url string) {
+			req := mustNewRequest(filename, url)
+			req.SetChecksum(sha256.New(), sum, false)
+			resp := mustDo(req)
+			if !resp.DidResume {
+				t.Errorf("expected Response.DidResume to be true")
+			}
+			if actual := resp.Size(); actual != int64(size) {
+				t.Errorf("expected Response.Size: %d, got: %d", size, actual)
+			}
+			testComplete(t, resp)
+		},
+			grabtest.ContentLength(size),
+			grabtest.HeaderBlacklist("Content-Length"),
+		)
+	})
+
+	t.Run("WithNoContentLengthHeaderAndChecksumFailure", func(t *testing.T) {
+		// ref: https://github.com/cavaliercoder/grab/pull/27
+		size := size * 2
+		grabtest.WithTestServer(t, func(url string) {
+			req := mustNewRequest(filename, url)
+			req.SetChecksum(sha256.New(), sum, false)
+			resp := DefaultClient.Do(req)
+			if err := resp.Err(); err != ErrBadChecksum {
+				t.Errorf("expected error: %v, got: %v", ErrBadChecksum, err)
+			}
+			if !resp.DidResume {
+				t.Errorf("expected Response.DidResume to be true")
+			}
+			if actual := resp.BytesComplete(); actual != int64(size) {
+				t.Errorf("expected Response.BytesComplete: %d, got: %d", size, actual)
+			}
+			if actual := resp.Size(); actual != int64(size) {
+				t.Errorf("expected Response.Size: %d, got: %d", size, actual)
+			}
+			testComplete(t, resp)
+		},
+			grabtest.ContentLength(size),
+			grabtest.HeaderBlacklist("Content-Length"),
 		)
 	})
 	// TODO: test when existing file is corrupted
@@ -292,8 +338,8 @@ func TestSkipExisting(t *testing.T) {
 		}
 
 		// ensure all bytes were resumed
-		if resp.Size == 0 || resp.Size != resp.bytesResumed {
-			t.Fatalf("Expected to skip %d bytes in redownload; got %d", resp.Size, resp.bytesResumed)
+		if resp.Size() == 0 || resp.Size() != resp.bytesResumed {
+			t.Fatalf("Expected to skip %d bytes in redownload; got %d", resp.Size(), resp.bytesResumed)
 		}
 	})
 
@@ -313,8 +359,7 @@ func TestSkipExisting(t *testing.T) {
 func TestBatch(t *testing.T) {
 	tests := 32
 	size := 32768
-	sum := "e11360251d1173650cdcd20f111d8f1ca2e412f572e8b36a4dc067121c1799b8"
-	sumb, _ := hex.DecodeString(sum)
+	sum := mustHexDecodeString("e11360251d1173650cdcd20f111d8f1ca2e412f572e8b36a4dc067121c1799b8")
 
 	// test with 4 workers and with one per request
 	grabtest.WithTestServer(t, func(url string) {
@@ -325,7 +370,7 @@ func TestBatch(t *testing.T) {
 				filename := fmt.Sprintf(".testBatch.%d", i+1)
 				reqs[i] = mustNewRequest(filename, url+fmt.Sprintf("/request_%d?", i+1))
 				reqs[i].Label = fmt.Sprintf("Test %d", i+1)
-				reqs[i].SetChecksum(sha256.New(), sumb, false)
+				reqs[i].SetChecksum(sha256.New(), sum, false)
 			}
 
 			// batch run
@@ -361,6 +406,7 @@ func TestBatch(t *testing.T) {
 // context.Context cancellation. Requests are cancelled in multiple states:
 // in-progress and unstarted.
 func TestCancelContext(t *testing.T) {
+	fileSize := 134217728
 	tests := 256
 	client := NewClient()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -383,9 +429,12 @@ func TestCancelContext(t *testing.T) {
 			if resp.Err() == nil || !strings.Contains(resp.Err().Error(), "canceled") {
 				t.Errorf("expected '%v', got '%v'", context.Canceled, resp.Err())
 			}
+			if resp.BytesComplete() >= int64(fileSize) {
+				t.Errorf("expected Response.BytesComplete: < %d, got: %d", fileSize, resp.BytesComplete())
+			}
 		}
 	},
-		grabtest.ContentLength(134217728),
+		grabtest.ContentLength(fileSize),
 	)
 }
 
@@ -597,8 +646,8 @@ func TestIssue37(t *testing.T) {
 	// download large file
 	grabtest.WithTestServer(t, func(url string) {
 		resp := mustDo(mustNewRequest(filename, url))
-		if resp.Size != largeSize {
-			t.Errorf("expected response size: %d, got: %d", largeSize, resp.Size)
+		if resp.Size() != largeSize {
+			t.Errorf("expected response size: %d, got: %d", largeSize, resp.Size())
 		}
 	}, grabtest.ContentLength(int(largeSize)))
 
@@ -607,8 +656,8 @@ func TestIssue37(t *testing.T) {
 		req := mustNewRequest(filename, url)
 		req.NoResume = true
 		resp := mustDo(req)
-		if resp.Size != smallSize {
-			t.Errorf("expected response size: %d, got: %d", smallSize, resp.Size)
+		if resp.Size() != smallSize {
+			t.Errorf("expected response size: %d, got: %d", smallSize, resp.Size())
 		}
 
 		// local file should have truncated and not resumed
@@ -653,4 +702,53 @@ func TestHeadBadStatus(t *testing.T) {
 	},
 		grabtest.StatusCode(statusFunc),
 	)
+}
+
+// TestMissingContentLength ensures that the Response.Size is correct for
+// transfers where the remote server does not send a Content-Length header.
+//
+// TestAutoResume also covers cases with checksum validation.
+//
+// Kudos to Setnička Jiří <Jiri.Setnicka@ysoft.com> for identifying and raising
+// a solution to this issue. Ref: https://github.com/cavaliercoder/grab/pull/27
+func TestMissingContentLength(t *testing.T) {
+	// expectSize must be sufficiently large that DefaultClient.Do won't prefetch
+	// the entire body and compute ContentLength before returning a Response.
+	expectSize := 1048576
+	opts := []grabtest.HandlerOption{
+		grabtest.ContentLength(expectSize),
+		grabtest.HeaderBlacklist("Content-Length"),
+		grabtest.TimeToFirstByte(time.Millisecond * 100), // delay for initial read
+	}
+	grabtest.WithTestServer(t, func(url string) {
+		req := mustNewRequest(".testMissingContentLength", url)
+		req.SetChecksum(
+			md5.New(),
+			mustHexDecodeString("c35cc7d8d91728a0cb052831bc4ef372"),
+			false)
+		resp := DefaultClient.Do(req)
+
+		// ensure remote server is not sending content-length header
+		if v := resp.HTTPResponse.Header.Get("Content-Length"); v != "" {
+			panic(fmt.Sprintf("http header content length must be empty, got: %s", v))
+		}
+		if v := resp.HTTPResponse.ContentLength; v != -1 {
+			panic(fmt.Sprintf("http response content length must be -1, got: %d", v))
+		}
+
+		// before completion, response size should be -1
+		if resp.Size() != -1 {
+			t.Errorf("expected response size: -1, got: %d", resp.Size())
+		}
+
+		// block for completion
+		if err := resp.Err(); err != nil {
+			panic(err)
+		}
+
+		// on completion, response size should be actual transfer size
+		if resp.Size() != int64(expectSize) {
+			t.Errorf("expected response size: %d, got: %d", expectSize, resp.Size())
+		}
+	}, opts...)
 }

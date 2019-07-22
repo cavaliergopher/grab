@@ -29,16 +29,23 @@ func AssertHTTPResponseHeader(t *testing.T, resp *http.Response, key, format str
 }
 
 func AssertHTTPResponseContentLength(t *testing.T, resp *http.Response, n int64) (ok bool) {
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			panic(err)
-		}
-	}()
 	ok = true
 	if resp.ContentLength != n {
 		ok = false
 		t.Errorf("expected header Content-Length: %d, got: %d", n, resp.ContentLength)
 	}
+	if !AssertHTTPResponseBodyLength(t, resp, n) {
+		ok = false
+	}
+	return
+}
+
+func AssertHTTPResponseBodyLength(t *testing.T, resp *http.Response, n int64) (ok bool) {
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			panic(err)
+		}
+	}()
 	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
