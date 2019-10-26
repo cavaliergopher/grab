@@ -122,3 +122,37 @@ func TestHeaderFilenames(t *testing.T) {
 		}
 	})
 }
+
+func TestHeaderWithMissingDirective(t *testing.T) {
+	u, _ := url.ParseRequestURI("http://test.com/filename")
+	resp := &http.Response{
+		Request: &http.Request{
+			URL: u,
+		},
+		Header: http.Header{},
+	}
+
+	setHeader := func(resp *http.Response, value string) {
+		resp.Header.Set("Content-Disposition", value)
+	}
+
+	t.Run("Valid", func(t *testing.T) {
+		expect := "filename"
+		testCases := []string{
+			"inline",
+			"attachment",
+		}
+
+		for _, tc := range testCases {
+			setHeader(resp, tc)
+			actual, err := guessFilename(resp)
+			if err != nil {
+				t.Errorf("error (%v): %v", tc, err)
+			}
+
+			if actual != expect {
+				t.Errorf("expected '%v' (%v), got '%v'", expect, tc, actual)
+			}
+		}
+	})
+}

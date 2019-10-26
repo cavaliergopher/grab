@@ -51,7 +51,9 @@ func guessFilename(resp *http.Response) (string, error) {
 	filename := resp.Request.URL.Path
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 		if _, params, err := mime.ParseMediaType(cd); err == nil {
-			filename = params["filename"]
+			if val, ok := params["filename"]; ok {
+				filename = val
+			} // else filename directive is missing.. fallback to URL.Path
 		}
 	}
 
