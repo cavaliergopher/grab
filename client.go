@@ -77,6 +77,7 @@ var DefaultClient = NewClient()
 func (c *Client) Do(req *Request) *Response {
 	// cancel will be called on all code-paths via closeResponse
 	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
 	resp := &Response{
 		Request:    req,
 		Start:      time.Now(),
