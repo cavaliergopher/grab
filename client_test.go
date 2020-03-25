@@ -441,6 +441,46 @@ func TestCancelContext(t *testing.T) {
 	)
 }
 
+// TestCancelHangingResponse tests that a never ending request is terminated
+// when the response is cancelled.
+func TestCancelHangingResponse(t *testing.T) {
+	fileSize := 10
+	client := NewClient()
+
+	grabtest.WithTestServer(t, func(url string) {
+		req := mustNewRequest("", fmt.Sprintf("%s/.testCancelHangingResponse", url))
+
+		resp := client.Do(req)
+		defer os.Remove(resp.Filename)
+
+		// Wait for some bytes to be transferred
+		for resp.BytesComplete() == 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		done := make(chan error)
+		go func() {
+			done <- resp.Cancel()
+		}()
+
+		select {
+		case err := <-done:
+			if err != context.Canceled {
+				t.Errorf("Expected context.Canceled error, go: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("response was not cancelled within 1s")
+		}
+		if resp.BytesComplete() == int64(fileSize) {
+			t.Error("download was not supposed to be complete")
+		}
+		fmt.Println("bye")
+	},
+		grabtest.RateLimiter(1),
+		grabtest.ContentLength(fileSize),
+	)
+}
+
 // TestNestedDirectory tests that missing subdirectories are created.
 func TestNestedDirectory(t *testing.T) {
 	dir := "./.testNested/one/two/three"
