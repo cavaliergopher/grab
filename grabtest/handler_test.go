@@ -54,7 +54,7 @@ func TestHandlerHeaderBlacklist(t *testing.T) {
 }
 
 func TestHandlerStatusCodeFuncs(t *testing.T) {
-	expect := 123
+	expect := 418 // I'm a teapot
 	WithTestServer(t, func(url string) {
 		resp := MustHTTPDo(MustHTTPNewRequest("GET", url, nil))
 		AssertHTTPResponseStatusCode(t, resp, expect)
