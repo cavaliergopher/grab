@@ -13,13 +13,18 @@ import (
 	"time"
 )
 
+// HTTPClient provides an interface allowing us to perform HTTP requests.
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // A Client is a file download client.
 //
 // Clients are safe for concurrent use by multiple goroutines.
 type Client struct {
 	// HTTPClient specifies the http.Client which will be used for communicating
 	// with the remote server during the file transfer.
-	HTTPClient *http.Client
+	HTTPClient HTTPClient
 
 	// UserAgent specifies the User-Agent string which will be set in the
 	// headers of all requests made by this client.
