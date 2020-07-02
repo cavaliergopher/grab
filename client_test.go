@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
@@ -579,6 +580,49 @@ func TestBeforeCopyHook(t *testing.T) {
 					resp.BytesComplete())
 			}
 			testComplete(t, resp)
+		})
+	})
+
+	// Assert that an existing local file will not be truncated prior to the
+	// BeforeCopy hook has a chance to cancel the request
+	t.Run("NoTruncate", func(t *testing.T) {
+		tfile, err := ioutil.TempFile("", "grab_client_test.*.file")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(tfile.Name())
+
+		const size = 128
+		_, err = tfile.Write(bytes.Repeat([]byte("x"), size))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		grabtest.WithTestServer(t, func(url string) {
+			called := false
+			req := mustNewRequest(tfile.Name(), url)
+			req.NoResume = true
+			req.BeforeCopy = func(resp *Response) error {
+				called = true
+				fi, err := tfile.Stat()
+				if err != nil {
+					t.Errorf("failed to stat temp file: %v", err)
+					return nil
+				}
+				if fi.Size() != size {
+					t.Errorf("expected existing file size of %d bytes "+
+						"prior to BeforeCopy hook, got %d", size, fi.Size())
+				}
+				return nil
+			}
+			resp := DefaultClient.Do(req)
+			if err := resp.Err(); err != nil {
+				t.Errorf("unexpected error using BeforeCopy hook: %v", err)
+			}
+			testComplete(t, resp)
+			if !called {
+				t.Error("BeforeCopy hook was never called")
+			}
 		})
 	})
 }
