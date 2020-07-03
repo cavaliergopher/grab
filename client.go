@@ -18,6 +18,12 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// truncater is a private interface allowing different response
+// Writers to be truncated
+type truncater interface {
+	Truncate(size int64)
+}
+
 // A Client is a file download client.
 //
 // Clients are safe for concurrent use by multiple goroutines.
@@ -425,7 +431,9 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 			if resp.DidResume {
 				flag = os.O_APPEND | os.O_WRONLY
 			} else {
-				flag = os.O_TRUNC | os.O_WRONLY
+				// truncate later in copyFile, if not cancelled
+				// by BeforeCopy hook
+				flag = os.O_WRONLY
 			}
 		}
 
@@ -482,6 +490,14 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	if resp.transfer == nil {
 		panic("grab: developer error: Response.transfer is nil")
 	}
+
+	// We waited to truncate the file in openWriter() to make sure
+	// the BeforeCopy didn't cancel the copy. If this was an existing
+	// file that is not going to be resumed, truncate the contents.
+	if t, ok := resp.writer.(truncater); ok && resp.fi != nil && !resp.DidResume {
+		t.Truncate(0)
+	}
+
 	bytesCopied, resp.err = resp.transfer.copy()
 	if resp.err != nil {
 		return c.closeResponse
