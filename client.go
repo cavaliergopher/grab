@@ -21,7 +21,7 @@ type HTTPClient interface {
 // truncater is a private interface allowing different response
 // Writers to be truncated
 type truncater interface {
-	Truncate(size int64)
+	Truncate(size int64) error
 }
 
 // A Client is a file download client.
