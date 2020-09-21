@@ -34,7 +34,7 @@ func mkdirp(path string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("error checking destination directory: %v", err)
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0777); err != nil {
 			return fmt.Errorf("error creating destination directory: %v", err)
 		}
 	} else if !fi.IsDir() {
