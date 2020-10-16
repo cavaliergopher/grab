@@ -352,6 +352,14 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 		return c.getRequest
 	}
 
+	// In case of redirects during HEAD, record the final URL and use it
+	// instead of the original URL when sending future requests.
+	// This way we avoid sending potentially unsupported requests to
+	// the original URL, e.g. "Range", since it was the final URL
+	// that advertised its support.
+	resp.Request.HTTPRequest.URL = resp.HTTPResponse.Request.URL
+	resp.Request.HTTPRequest.Host = resp.HTTPResponse.Request.Host
+
 	return c.readResponse
 }
 
