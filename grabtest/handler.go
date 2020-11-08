@@ -136,7 +136,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for i := offset; !isRequestClosed(r) && i < h.contentLength; i++ {
 			bw.Write([]byte{byte(i)})
 			if h.rateLimiter != nil {
-				<-h.rateLimiter.C
+				bw.Flush()
+				w.(http.Flusher).Flush() // force the server to send the data to the client
+				select {
+				case <-h.rateLimiter.C:
+				case <-r.Context().Done():
+				}
 			}
 		}
 		if !isRequestClosed(r) {
@@ -147,13 +152,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // isRequestClosed returns true if the client request has been canceled.
 func isRequestClosed(r *http.Request) bool {
-	ctx := r.Context()
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
+	return r.Context().Err() != nil
 }
 
 func httpError(w http.ResponseWriter, code int) {
