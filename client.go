@@ -470,11 +470,18 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		resp.bufferSize = 32 * 1024
 	}
 	b := make([]byte, resp.bufferSize)
+
+	r, err := resp.Request.GetReader(resp.HTTPResponse.Body)
+	if err != nil {
+		resp.err = err
+		return c.closeResponse
+	}
+
 	resp.transfer = newTransfer(
 		resp.Request.Context(),
 		resp.Request.RateLimiter,
 		resp.writer,
-		resp.HTTPResponse.Body,
+		r,
 		b)
 
 	// next step is copyFile, but this will be called later in another goroutine
