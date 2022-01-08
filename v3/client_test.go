@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cavaliercoder/grab/pkg/grabtest"
+	"github.com/cavaliergopher/grab/v3/pkg/grabtest"
 )
 
 // TestFilenameResolutions tests that the destination filename for Requests can
@@ -205,7 +205,7 @@ func TestContentLength(t *testing.T) {
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
-	sum := grabtest.DefaultHandlerSHA256ChecksumBytes //grabtest.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
+	sum := grabtest.DefaultHandlerSHA256ChecksumBytes //grab/v3test.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
 	filename := ".testAutoResume"
 
 	defer os.Remove(filename)
@@ -293,7 +293,7 @@ func TestAutoResume(t *testing.T) {
 	})
 
 	t.Run("WithNoContentLengthHeaderAndChecksumFailure", func(t *testing.T) {
-		// ref: https://github.com/cavaliercoder/grab/pull/27
+		// ref: https://github.com/cavaliergopher/grab/v3/pull/27
 		size := size * 2
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
@@ -474,7 +474,6 @@ func TestCancelHangingResponse(t *testing.T) {
 		if resp.BytesComplete() == int64(fileSize) {
 			t.Error("download was not supposed to be complete")
 		}
-		fmt.Println("bye")
 	},
 		grabtest.RateLimiter(1),
 		grabtest.ContentLength(fileSize),
@@ -723,7 +722,7 @@ func TestAfterCopyHook(t *testing.T) {
 }
 
 func TestIssue37(t *testing.T) {
-	// ref: https://github.com/cavaliercoder/grab/issues/37
+	// ref: https://github.com/cavaliergopher/grab/v3/issues/37
 	filename := "./.testIssue37"
 	largeSize := int64(2097152)
 	smallSize := int64(1048576)
@@ -764,7 +763,7 @@ func TestIssue37(t *testing.T) {
 // TestHeadBadStatus validates that HEAD requests that return non-200 can be
 // ignored and succeed if the GET requests succeeeds.
 //
-// Fixes: https://github.com/cavaliercoder/grab/issues/43
+// Fixes: https://github.com/cavaliergopher/grab/v3/issues/43
 func TestHeadBadStatus(t *testing.T) {
 	expect := http.StatusOK
 	filename := ".testIssue43"
@@ -796,7 +795,7 @@ func TestHeadBadStatus(t *testing.T) {
 // TestAutoResume also covers cases with checksum validation.
 //
 // Kudos to Setnička Jiří <Jiri.Setnicka@ysoft.com> for identifying and raising
-// a solution to this issue. Ref: https://github.com/cavaliercoder/grab/pull/27
+// a solution to this issue. Ref: https://github.com/cavaliergopher/grab/v3/pull/27
 func TestMissingContentLength(t *testing.T) {
 	// expectSize must be sufficiently large that DefaultClient.Do won't prefetch
 	// the entire body and compute ContentLength before returning a Response.

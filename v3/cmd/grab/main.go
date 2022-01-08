@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cavaliercoder/grab/pkg/grabui"
+	"github.com/cavaliergopher/grab/v3/pkg/grabui"
 )
 
 func main() {

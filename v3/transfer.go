@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cavaliercoder/grab/pkg/bps"
+	"github.com/cavaliergopher/grab/v3/pkg/bps"
 )
 
 type transfer struct {

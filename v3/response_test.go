@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cavaliercoder/grab/pkg/grabtest"
+	"github.com/cavaliergopher/grab/v3/pkg/grabtest"
 )
 
 // testComplete validates that a completed Response has all the desired fields.

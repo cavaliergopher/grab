@@ -1,29 +1,17 @@
 GO = go
 GOGET = $(GO) get -u
 
-all: check lint
+all: check
 
 check:
-	$(GO) test -v -cover -race ./...
-	cd cmd/grab && $(MAKE) -B all
+	cd v3 && $(GO) test -v -cover -race ./...
+	cd v3/cmd/grab && $(MAKE) -B all
 
 install:
-	$(GO) install -v ./...
+	cd v3/cmd/grab && $(MAKE) install
 
 clean:
-	$(GO) clean -x ./...
+	cd v3 && $(GO) clean -x ./...
 	rm -rvf ./.test*
 
-lint:
-	gofmt -l -e -s . || :
-	go vet . || :
-	golint . || :
-	gocyclo -over 15 . || :
-	misspell ./* || :
-
-deps:
-	$(GOGET) github.com/golang/lint/golint
-	$(GOGET) github.com/fzipp/gocyclo
-	$(GOGET) github.com/client9/misspell/cmd/misspell
-
-.PHONY: all check install clean lint deps
+.PHONY: all check install clean
