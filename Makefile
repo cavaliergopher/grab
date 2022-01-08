@@ -4,8 +4,8 @@ GOGET = $(GO) get -u
 all: check lint
 
 check:
+	$(GO) test -v -cover -race ./...
 	cd cmd/grab && $(MAKE) -B all
-	$(GO) test -cover -race ./...
 
 install:
 	$(GO) install -v ./...

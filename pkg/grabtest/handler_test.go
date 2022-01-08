@@ -57,6 +57,7 @@ func TestHandlerStatusCodeFuncs(t *testing.T) {
 	expect := 418 // I'm a teapot
 	WithTestServer(t, func(url string) {
 		resp := MustHTTPDo(MustHTTPNewRequest("GET", url, nil))
+		defer resp.Body.Close()
 		AssertHTTPResponseStatusCode(t, resp, expect)
 	},
 		StatusCode(func(req *http.Request) int { return expect }),

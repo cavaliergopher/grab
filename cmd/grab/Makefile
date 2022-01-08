@@ -3,7 +3,7 @@ SOURCES = main.go
 all : grab
 
 grab: $(SOURCES)
-	go build -x -o grab $(SOURCES)
+	go build -o grab $(SOURCES)
 
 clean:
 	go clean -x

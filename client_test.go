@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cavaliercoder/grab/grabtest"
+	"github.com/cavaliercoder/grab/pkg/grabtest"
 )
 
 // TestFilenameResolutions tests that the destination filename for Requests can
