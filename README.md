@@ -70,7 +70,7 @@ Loop:
 		case <-t.C:
 			fmt.Printf("  transferred %v / %v bytes (%.2f%%)\n",
 				resp.BytesComplete(),
-				resp.Size,
+				resp.Size(),
 				100*resp.Progress())
 
 		case <-resp.Done:
