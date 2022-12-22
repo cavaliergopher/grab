@@ -1,5 +1,6 @@
 package grab
 
+//nolint:gosec
 import (
 	"bytes"
 	"context"
@@ -10,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
@@ -42,7 +42,7 @@ func TestFilenameResolution(t *testing.T) {
 		{"Failure", "", "", "", ""},
 	}
 
-	err := os.Mkdir(".test", 0777)
+	err := os.Mkdir(".test", 0o777)
 	if err != nil {
 		panic(err)
 	}
@@ -78,6 +78,8 @@ func TestFilenameResolution(t *testing.T) {
 
 // TestChecksums checks that checksum validation behaves as expected for valid
 // and corrupted downloads.
+//
+//nolint:gosec
 func TestChecksums(t *testing.T) {
 	tests := []struct {
 		size  int
@@ -205,7 +207,7 @@ func TestContentLength(t *testing.T) {
 func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
-	sum := grabtest.DefaultHandlerSHA256ChecksumBytes //grab/v3test.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
+	sum := grabtest.DefaultHandlerSHA256ChecksumBytes // grab/v3test.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
 	filename := ".testAutoResume"
 
 	defer os.Remove(filename)
@@ -317,6 +319,17 @@ func TestAutoResume(t *testing.T) {
 			grabtest.HeaderBlacklist("Content-Length"),
 		)
 	})
+
+	t.Run("WithHeadRequestBreak", func(t *testing.T) {
+		grabtest.WithTestServer(t, func(url string) {
+			req := mustNewRequest(filename, url)
+			resp := DefaultClient.Do(req)
+			testComplete(t, resp)
+		},
+			grabtest.WithBreakHeadRequest(),
+		)
+	})
+
 	// TODO: test when existing file is corrupted
 }
 
@@ -382,22 +395,21 @@ func TestBatch(t *testing.T) {
 			// listen for responses
 		Loop:
 			for i := 0; i < len(reqs); {
-				select {
-				case resp := <-responses:
-					if resp == nil {
-						break Loop
-					}
-					testComplete(t, resp)
-					if err := resp.Err(); err != nil {
-						t.Errorf("%s: %v", resp.Filename, err)
-					}
-
-					// remove test file
-					if resp.IsComplete() {
-						os.Remove(resp.Filename) // ignore errors
-					}
-					i++
+				resp := <-responses
+				if resp == nil {
+					break Loop
 				}
+				testComplete(t, resp)
+				if err := resp.Err(); err != nil {
+					t.Errorf("%s: %v", resp.Filename, err)
+				}
+
+				// remove test file
+				if resp.IsComplete() {
+					os.Remove(resp.Filename) // ignore errors
+				}
+				i++
+
 			}
 		}
 	},
@@ -426,7 +438,7 @@ func TestCancelContext(t *testing.T) {
 		time.Sleep(time.Millisecond * 500)
 		cancel()
 		for resp := range respch {
-			defer os.Remove(resp.Filename)
+			defer os.Remove(resp.Filename) //nolint:staticcheck
 
 			// err should be context.Canceled or http.errRequestCanceled
 			if resp.Err() == nil || !strings.Contains(resp.Err().Error(), "canceled") {
@@ -516,7 +528,7 @@ func TestRemoteTime(t *testing.T) {
 	defer os.Remove(filename)
 
 	// random time between epoch and now
-	expect := time.Unix(rand.Int63n(time.Now().Unix()), 0)
+	expect := time.Unix(rand.Int63n(time.Now().Unix()), 0) //nolint:gosec
 	grabtest.WithTestServer(t, func(url string) {
 		resp := mustDo(mustNewRequest(filename, url))
 		fi, err := os.Stat(resp.Filename)
@@ -625,7 +637,7 @@ func TestBeforeCopyHook(t *testing.T) {
 	// Assert that an existing local file will not be truncated prior to the
 	// BeforeCopy hook has a chance to cancel the request
 	t.Run("NoTruncate", func(t *testing.T) {
-		tfile, err := ioutil.TempFile("", "grab_client_test.*.file")
+		tfile, err := os.CreateTemp("", "grab_client_test.*.file")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -808,7 +820,7 @@ func TestMissingContentLength(t *testing.T) {
 	grabtest.WithTestServer(t, func(url string) {
 		req := mustNewRequest(".testMissingContentLength", url)
 		req.SetChecksum(
-			md5.New(),
+			md5.New(), //nolint:gosec
 			grabtest.DefaultHandlerMD5ChecksumBytes,
 			false)
 		resp := DefaultClient.Do(req)
@@ -844,7 +856,7 @@ func TestNoStore(t *testing.T) {
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
 			req.NoStore = true
-			req.SetChecksum(md5.New(), grabtest.DefaultHandlerMD5ChecksumBytes, true)
+			req.SetChecksum(md5.New(), grabtest.DefaultHandlerMD5ChecksumBytes, true) //nolint:gosec
 			resp := mustDo(req)
 
 			// ensure Response.Bytes is correct and can be reread
@@ -902,7 +914,7 @@ func TestNoStore(t *testing.T) {
 			req := mustNewRequest("", url)
 			req.NoStore = true
 			req.SetChecksum(
-				md5.New(),
+				md5.New(), //nolint:gosec
 				grabtest.MustHexDecodeString("deadbeefcafebabe"),
 				true)
 			resp := DefaultClient.Do(req)

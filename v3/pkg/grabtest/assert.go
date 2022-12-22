@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"testing"
 )
@@ -15,7 +14,6 @@ func AssertHTTPResponseStatusCode(t *testing.T, resp *http.Response, expect int)
 		t.Errorf("expected status code: %d, got: %d", expect, resp.StatusCode)
 		return
 	}
-	ok = true
 	return true
 }
 
@@ -48,7 +46,7 @@ func AssertHTTPResponseBodyLength(t *testing.T, resp *http.Response, n int64) (o
 			panic(err)
 		}
 	}()
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -77,7 +75,7 @@ func MustHTTPDo(req *http.Request) *http.Response {
 
 func MustHTTPDoWithClose(req *http.Request) *http.Response {
 	resp := MustHTTPDo(req)
-	if _, err := io.Copy(ioutil.Discard, resp.Body); err != nil {
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		panic(err)
 	}
 	if err := resp.Body.Close(); err != nil {
