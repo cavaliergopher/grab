@@ -90,3 +90,11 @@ func AttachmentFilename(filename string) HandlerOption {
 		return nil
 	}
 }
+
+func WithBreakHeadRequest() HandlerOption {
+	return func(h *handler) error {
+		h.withBreakHeadRequest = true
+		h.withBreakGetRequestCh = make(chan struct{})
+		return nil
+	}
+}

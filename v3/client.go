@@ -345,7 +345,7 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 
 	resp.HTTPResponse, resp.err = c.doHTTPRequest(hreq)
 	if resp.err != nil {
-		return c.closeResponse
+		return c.getRequest
 	}
 	resp.HTTPResponse.Body.Close()
 

@@ -20,18 +20,20 @@ var (
 type StatusCodeFunc func(req *http.Request) int
 
 type handler struct {
-	statusCodeFunc     StatusCodeFunc
-	methodWhitelist    []string
-	headerBlacklist    []string
-	contentLength      int
-	acceptRanges       bool
-	attachmentFilename string
-	lastModified       time.Time
-	ttfb               time.Duration
-	rateLimiter        *time.Ticker
+	statusCodeFunc        StatusCodeFunc
+	methodWhitelist       []string
+	headerBlacklist       []string
+	contentLength         int
+	acceptRanges          bool
+	attachmentFilename    string
+	lastModified          time.Time
+	ttfb                  time.Duration
+	rateLimiter           *time.Ticker
+	withBreakHeadRequest  bool
+	withBreakGetRequestCh chan struct{}
 }
 
-func NewHandler(options ...HandlerOption) (http.Handler, error) {
+func NewHandler(options ...HandlerOption) (*handler, error) {
 	h := &handler{
 		statusCodeFunc:  func(req *http.Request) int { return http.StatusOK },
 		methodWhitelist: []string{"GET", "HEAD"},
@@ -53,11 +55,26 @@ func WithTestServer(t *testing.T, f func(url string), options ...HandlerOption) 
 		return
 	}
 	s := httptest.NewServer(h)
+	go h.closeConnections(s)
 	defer func() {
-		h.(*handler).close()
+		h.close()
 		s.Close()
 	}()
 	f(s.URL)
+}
+
+func (h *handler) breakHeadRequest() {
+	if h.withBreakHeadRequest {
+		h.withBreakGetRequestCh <- struct{}{}
+		time.Sleep(time.Second)
+	}
+}
+
+func (h *handler) closeConnections(s *httptest.Server) {
+	if h.withBreakHeadRequest {
+		<-h.withBreakGetRequestCh
+		s.CloseClientConnections()
+	}
 }
 
 func (h *handler) close() {
@@ -70,6 +87,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// delay response
 	if h.ttfb > 0 {
 		time.Sleep(h.ttfb)
+	}
+
+	if r.Method == "HEAD" {
+		h.breakHeadRequest()
 	}
 
 	// validate request method

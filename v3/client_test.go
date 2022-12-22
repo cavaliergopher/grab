@@ -317,6 +317,17 @@ func TestAutoResume(t *testing.T) {
 			grabtest.HeaderBlacklist("Content-Length"),
 		)
 	})
+
+	t.Run("WithHeadRequestBreak", func(t *testing.T) {
+		grabtest.WithTestServer(t, func(url string) {
+			req := mustNewRequest(filename, url)
+			resp := DefaultClient.Do(req)
+			testComplete(t, resp)
+		},
+			grabtest.WithBreakHeadRequest(),
+		)
+	})
+
 	// TODO: test when existing file is corrupted
 }
 
