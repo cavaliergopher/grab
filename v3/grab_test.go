@@ -2,7 +2,6 @@ package grab
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"testing"
@@ -17,7 +16,7 @@ func TestMain(m *testing.M) {
 		if err != nil {
 			panic(err)
 		}
-		tmpDir, err := ioutil.TempDir("", "grab-")
+		tmpDir, err := os.MkdirTemp("", "grab-")
 		if err != nil {
 			panic(err)
 		}
@@ -25,7 +24,7 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 		defer func() {
-			os.Chdir(cwd)
+			_ = os.Chdir(cwd)
 			if err := os.RemoveAll(tmpDir); err != nil {
 				panic(err)
 			}

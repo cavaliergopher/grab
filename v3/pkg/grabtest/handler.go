@@ -155,7 +155,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// use buffered io to reduce overhead on the reader
 		bw := bufio.NewWriterSize(w, 4096)
 		for i := offset; !isRequestClosed(r) && i < h.contentLength; i++ {
-			bw.Write([]byte{byte(i)})
+			_, _ = bw.Write([]byte{byte(i)})
 			if h.rateLimiter != nil {
 				bw.Flush()
 				w.(http.Flusher).Flush() // force the server to send the data to the client

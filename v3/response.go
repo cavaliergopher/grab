@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"sync/atomic"
@@ -169,7 +168,7 @@ func (c *Response) Duration() time.Duration {
 		return c.End.Sub(c.Start)
 	}
 
-	return time.Now().Sub(c.Start)
+	return time.Since(c.Start)
 }
 
 // ETA returns the estimated time at which the the download will complete, given
@@ -204,7 +203,7 @@ func (c *Response) Open() (io.ReadCloser, error) {
 
 func (c *Response) openUnsafe() (io.ReadCloser, error) {
 	if c.Request.NoStore {
-		return ioutil.NopCloser(bytes.NewReader(c.storeBuffer.Bytes())), nil
+		return io.NopCloser(bytes.NewReader(c.storeBuffer.Bytes())), nil
 	}
 	return os.Open(c.Filename)
 }
@@ -226,7 +225,7 @@ func (c *Response) Bytes() ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return ioutil.ReadAll(f)
+	return io.ReadAll(f)
 }
 
 func (c *Response) requestMethod() string {

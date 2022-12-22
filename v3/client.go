@@ -3,6 +3,7 @@ package grab
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -81,7 +82,7 @@ func (c *Client) Do(req *Request) *Response {
 	resp := &Response{
 		Request:    req,
 		Start:      time.Now(),
-		Done:       make(chan struct{}, 0),
+		Done:       make(chan struct{}),
 		Filename:   req.Filename,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -208,7 +209,7 @@ func (c *Client) statFileInfo(resp *Response) stateFunc {
 	}
 	fi, err := os.Stat(resp.Filename)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return c.headRequest
 		}
 		resp.err = err
@@ -447,7 +448,7 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		}
 
 		// open file
-		f, err := os.OpenFile(resp.Filename, flag, 0666)
+		f, err := os.OpenFile(resp.Filename, flag, 0o666)
 		if err != nil {
 			resp.err = err
 			return c.closeResponse
@@ -455,9 +456,9 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		resp.writer = f
 
 		// seek to start or end
-		whence := os.SEEK_SET
+		whence := io.SeekStart
 		if resp.bytesResumed > 0 {
-			whence = os.SEEK_END
+			whence = io.SeekEnd
 		}
 		_, resp.err = f.Seek(0, whence)
 		if resp.err != nil {
@@ -504,7 +505,7 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	// the BeforeCopy didn't cancel the copy. If this was an existing
 	// file that is not going to be resumed, truncate the contents.
 	if t, ok := resp.writer.(truncater); ok && resp.fi != nil && !resp.DidResume {
-		t.Truncate(0)
+		_ = t.Truncate(0)
 	}
 
 	bytesCopied, resp.err = resp.transfer.copy()
@@ -557,7 +558,7 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 
 	resp.fi = nil
 	closeWriter(resp)
-	resp.closeResponseBody()
+	_ = resp.closeResponseBody()
 
 	resp.End = time.Now()
 	close(resp.Done)
