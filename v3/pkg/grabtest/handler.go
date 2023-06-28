@@ -35,10 +35,15 @@ type handler struct {
 
 func NewHandler(options ...HandlerOption) (http.Handler, error) {
 	h := &handler{
-		statusCodeFunc:  func(req *http.Request) int { return http.StatusOK },
 		methodWhitelist: []string{"GET", "HEAD"},
 		contentLength:   DefaultHandlerContentLength,
 		acceptRanges:    true,
+	}
+	h.statusCodeFunc = func(req *http.Request) int {
+		if h.acceptRanges && strings.HasPrefix(req.Header.Get("Range"), "bytes=") {
+			return http.StatusPartialContent
+		}
+		return http.StatusOK
 	}
 	for _, option := range options {
 		if err := option(h); err != nil {
