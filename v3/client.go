@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -48,11 +49,23 @@ type Client struct {
 
 // NewClient returns a new file download Client, using default configuration.
 func NewClient() *Client {
+	dialer := &net.Dialer{}
 	return &Client{
 		UserAgent: "grab",
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
+				DialContext: func(ctx context.Context, network string, addr string) (net.Conn, error) {
+					conn, err := dialer.DialContext(ctx, network, addr)
+					if err == nil {
+						// Default net.TCPConn calls SetNoDelay(true)
+						// which likely could be an impact on performance
+						// with large file downloads, and many ACKs on networks
+						// with higher latency
+						err = conn.(*net.TCPConn).SetNoDelay(false)
+					}
+					return conn, err
+				},
 			},
 		},
 	}
@@ -86,6 +99,7 @@ func (c *Client) Do(req *Request) *Response {
 		ctx:        ctx,
 		cancel:     cancel,
 		bufferSize: req.BufferSize,
+		transfer:   (*transfer)(nil),
 	}
 	if resp.bufferSize == 0 {
 		// default to Client.BufferSize
@@ -330,13 +344,19 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 	}
 	resp.optionsKnown = true
 
-	if resp.Request.NoResume {
-		return c.getRequest
-	}
+	// If we are going to do a range request, then we need to perform
+	// the HEAD req to check for support.
+	// Otherwise, we may not need to do the HEAD request if we have
+	// enough information already.
+	if resp.Request.RangeRequestMax <= 0 {
+		if resp.Request.NoResume {
+			return c.getRequest
+		}
 
-	if resp.Filename != "" && resp.fi == nil {
-		// destination path is already known and does not exist
-		return c.getRequest
+		if resp.Filename != "" && resp.fi == nil {
+			// destination path is already known and does not exist
+			return c.getRequest
+		}
 	}
 
 	hreq := new(http.Request)
@@ -365,6 +385,13 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 }
 
 func (c *Client) getRequest(resp *Response) stateFunc {
+	if resp.Request.RangeRequestMax > 0 && resp.acceptRanges {
+		// For a concurrent range request, we don't do a single
+		// GET request here. It will be handled later in the transfer,
+		// based on the HEAD response
+		return c.openWriter
+	}
+
 	resp.HTTPResponse, resp.err = c.doHTTPRequest(resp.Request.HTTPRequest)
 	if resp.err != nil {
 		return c.closeResponse
@@ -410,11 +437,12 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 		resp.Filename = filepath.Join(resp.Request.Filename, filename)
 	}
 
-	if !resp.Request.NoStore && resp.requestMethod() == "HEAD" {
-		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
-			resp.CanResume = true
+	if resp.requestMethod() == "HEAD" {
+		resp.acceptRanges = resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes"
+		if !resp.Request.NoStore {
+			resp.CanResume = resp.acceptRanges
+			return c.statFileInfo
 		}
-		return c.statFileInfo
 	}
 	return c.openWriter
 }
@@ -430,6 +458,12 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 			return c.closeResponse
 		}
 	}
+
+	if resp.bufferSize < 1 {
+		resp.bufferSize = 32 * 1024
+	}
+
+	var writerAt io.WriterAt
 
 	if resp.Request.NoStore {
 		resp.writer = &resp.storeBuffer
@@ -453,11 +487,12 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 			return c.closeResponse
 		}
 		resp.writer = f
+		writerAt = f
 
 		// seek to start or end
-		whence := os.SEEK_SET
+		whence := io.SeekStart
 		if resp.bytesResumed > 0 {
-			whence = os.SEEK_END
+			whence = io.SeekEnd
 		}
 		_, resp.err = f.Seek(0, whence)
 		if resp.err != nil {
@@ -469,13 +504,21 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 	if resp.bufferSize < 1 {
 		resp.bufferSize = 32 * 1024
 	}
-	b := make([]byte, resp.bufferSize)
-	resp.transfer = newTransfer(
-		resp.Request.Context(),
-		resp.Request.RateLimiter,
-		resp.writer,
-		resp.HTTPResponse.Body,
-		b)
+
+	if resp.Request.RangeRequestMax > 0 && resp.acceptRanges && writerAt != nil {
+		// TODO: should we inspect resp.HTTPResponse.ContentLength
+		//   and have a threshold under which a certain size should
+		//   not use range requests? ie < 1MB? 256KB?
+		resp.transfer = newTransferRanges(c.HTTPClient, resp, writerAt)
+
+	} else {
+		resp.transfer = newTransfer(
+			resp.Request.Context(),
+			resp.Request.RateLimiter,
+			resp.writer,
+			resp.HTTPResponse.Body,
+			resp.bufferSize)
+	}
 
 	// next step is copyFile, but this will be called later in another goroutine
 	return nil
@@ -507,7 +550,7 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 		t.Truncate(0)
 	}
 
-	bytesCopied, resp.err = resp.transfer.copy()
+	bytesCopied, resp.err = resp.transfer.Copy()
 	if resp.err != nil {
 		return c.closeResponse
 	}

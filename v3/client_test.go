@@ -912,3 +912,61 @@ func TestNoStore(t *testing.T) {
 		})
 	})
 }
+
+// TestRangeRequest tests the option of using parallel range requests to download
+// chunks of the remote resource
+func TestRangeRequest(t *testing.T) {
+	size := int64(32768)
+	testCases := []struct {
+		Name       string
+		Chunks     int
+		StatusCode int
+	}{
+		{"NumChunksNeg", -1, http.StatusOK},
+		{"NumChunks0", 0, http.StatusOK},
+		{"NumChunks1", 1, http.StatusPartialContent},
+		{"NumChunks5", 5, http.StatusPartialContent},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.Name, func(t *testing.T) {
+			opts := []grabtest.HandlerOption{
+				grabtest.ContentLength(int(size)),
+				grabtest.StatusCode(func(r *http.Request) int {
+					if test.Chunks > 0 {
+						return http.StatusPartialContent
+					}
+					return http.StatusOK
+				}),
+			}
+
+			grabtest.WithTestServer(t, func(url string) {
+				name := fmt.Sprintf(".testRangeRequest-%s", test.Name)
+				req := mustNewRequest(name, url)
+				req.RangeRequestMax = test.Chunks
+
+				resp := DefaultClient.Do(req)
+				defer os.Remove(resp.Filename)
+
+				err := resp.Err()
+				if err == ErrBadLength {
+					t.Errorf("error: %v", err)
+				} else if err != nil {
+					panic(err)
+				} else if resp.Size() != size {
+					t.Errorf("expected %v bytes, got %v bytes", size, resp.Size())
+				}
+
+				if resp.HTTPResponse.StatusCode != test.StatusCode {
+					t.Errorf("expected status code %v, got %d", test.StatusCode, resp.HTTPResponse.StatusCode)
+				}
+
+				if bps := resp.BytesPerSecond(); bps <= 0 {
+					t.Errorf("expected BytesPerSecond > 0, got %v", bps)
+				}
+
+				testComplete(t, resp)
+			}, opts...)
+		})
+	}
+}

@@ -99,6 +99,15 @@ type Request struct {
 	// the Response object.
 	AfterCopy Hook
 
+	// RangeRequestMax enables the use of "Range" requests, if supported by the
+	// server, to download multiple chunks. A value > 0 defines how many chunks
+	// to execute concurrently.
+	// If the server does not support "accept-range", then the original single
+	// request behaviour is used.
+	// Note that the BufferSize will be applied as a separate buffer for each of
+	// the concurrent range request chunks
+	RangeRequestMax int
+
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash
 	checksum      []byte
