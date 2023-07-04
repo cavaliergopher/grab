@@ -386,10 +386,12 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 
 func (c *Client) getRequest(resp *Response) stateFunc {
 	if resp.Request.RangeRequestMax > 0 && resp.acceptRanges {
-		// For a concurrent range request, we don't do a single
-		// GET request here. It will be handled later in the transfer,
-		// based on the HEAD response
-		return c.openWriter
+		if resp.HTTPResponse.ContentLength >= resp.Request.RangeRequestMinSize {
+			// For a concurrent range request, we don't do a single
+			// GET request here. It will be handled later in the transfer,
+			// based on the HEAD response
+			return c.openWriter
+		}
 	}
 
 	resp.HTTPResponse, resp.err = c.doHTTPRequest(resp.Request.HTTPRequest)
@@ -506,19 +508,19 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 	}
 
 	if resp.Request.RangeRequestMax > 0 && resp.acceptRanges && writerAt != nil {
-		// TODO: should we inspect resp.HTTPResponse.ContentLength
-		//   and have a threshold under which a certain size should
-		//   not use range requests? ie < 1MB? 256KB?
-		resp.transfer = newTransferRanges(c.HTTPClient, resp, writerAt)
-
-	} else {
-		resp.transfer = newTransfer(
-			resp.Request.Context(),
-			resp.Request.RateLimiter,
-			resp.writer,
-			resp.HTTPResponse.Body,
-			resp.bufferSize)
+		if resp.HTTPResponse.ContentLength >= resp.Request.RangeRequestMinSize {
+			resp.transfer = newTransferRanges(c.HTTPClient, resp, writerAt)
+			// next step is copyFile, but this will be called later in another goroutine
+			return nil
+		}
 	}
+
+	resp.transfer = newTransfer(
+		resp.Request.Context(),
+		resp.Request.RateLimiter,
+		resp.writer,
+		resp.HTTPResponse.Body,
+		resp.bufferSize)
 
 	// next step is copyFile, but this will be called later in another goroutine
 	return nil

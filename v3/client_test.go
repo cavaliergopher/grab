@@ -921,11 +921,16 @@ func TestRangeRequest(t *testing.T) {
 		Name       string
 		Chunks     int
 		StatusCode int
+		MinSize    int64
 	}{
-		{"NumChunksNeg", -1, http.StatusOK},
-		{"NumChunks0", 0, http.StatusOK},
-		{"NumChunks1", 1, http.StatusPartialContent},
-		{"NumChunks5", 5, http.StatusPartialContent},
+		{Name: "NumChunksNeg", Chunks: -1, StatusCode: http.StatusOK},
+		{Name: "NumChunks0", StatusCode: http.StatusOK},
+		{Name: "NumChunks1", Chunks: 1, StatusCode: http.StatusPartialContent},
+		{Name: "NumChunks5", Chunks: 5, StatusCode: http.StatusPartialContent},
+
+		// should not run a Range request because the Content-Length is
+		// not large enough
+		{Name: "RangeRequestMinSize", Chunks: 5, MinSize: size + 1, StatusCode: http.StatusOK},
 	}
 
 	for _, test := range testCases {
@@ -933,7 +938,7 @@ func TestRangeRequest(t *testing.T) {
 			opts := []grabtest.HandlerOption{
 				grabtest.ContentLength(int(size)),
 				grabtest.StatusCode(func(r *http.Request) int {
-					if test.Chunks > 0 {
+					if test.Chunks > 0 && size >= test.MinSize {
 						return http.StatusPartialContent
 					}
 					return http.StatusOK
@@ -944,6 +949,7 @@ func TestRangeRequest(t *testing.T) {
 				name := fmt.Sprintf(".testRangeRequest-%s", test.Name)
 				req := mustNewRequest(name, url)
 				req.RangeRequestMax = test.Chunks
+				req.RangeRequestMinSize = test.MinSize
 
 				resp := DefaultClient.Do(req)
 				defer os.Remove(resp.Filename)

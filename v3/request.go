@@ -108,6 +108,12 @@ type Request struct {
 	// the concurrent range request chunks
 	RangeRequestMax int
 
+	// RangeRequestMax sets minimum size in bytes for the Content-Length of the
+	// remote file to be downloaded using a "Range" request. If the file size
+	// is less than RangeRequestMinSize, then the entire body will be downloaded
+	// using a normal request.
+	RangeRequestMinSize int64
+
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash
 	checksum      []byte
