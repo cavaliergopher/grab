@@ -3,6 +3,7 @@ package grab
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -369,7 +370,8 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 	}
 	resp.HTTPResponse.Body.Close()
 
-	if resp.HTTPResponse.StatusCode != http.StatusOK {
+	if resp.HTTPResponse.StatusCode != http.StatusOK &&
+		resp.HTTPResponse.StatusCode != http.StatusPartialContent {
 		return c.getRequest
 	}
 
@@ -385,13 +387,11 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 }
 
 func (c *Client) getRequest(resp *Response) stateFunc {
-	if resp.Request.RangeRequestMax > 0 && resp.acceptRanges {
-		if resp.HTTPResponse.ContentLength >= resp.Request.RangeRequestMinSize {
-			// For a concurrent range request, we don't do a single
-			// GET request here. It will be handled later in the transfer,
-			// based on the HEAD response
-			return c.openWriter
-		}
+	if resp.isRangeRequest() {
+		// For a concurrent range request, we don't do a single
+		// GET request here. It will be handled later in the transfer,
+		// based on the HEAD response
+		return c.openWriter
 	}
 
 	resp.HTTPResponse, resp.err = c.doHTTPRequest(resp.Request.HTTPRequest)
@@ -473,7 +473,7 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		// compute write flags
 		flag := os.O_CREATE | os.O_WRONLY
 		if resp.fi != nil {
-			if resp.DidResume {
+			if resp.DidResume && !resp.isRangeRequest() {
 				flag = os.O_APPEND | os.O_WRONLY
 			} else {
 				// truncate later in copyFile, if not cancelled
@@ -507,12 +507,10 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		resp.bufferSize = 32 * 1024
 	}
 
-	if resp.Request.RangeRequestMax > 0 && resp.acceptRanges && writerAt != nil {
-		if resp.HTTPResponse.ContentLength >= resp.Request.RangeRequestMinSize {
-			resp.transfer = newTransferRanges(c.HTTPClient, resp, writerAt)
-			// next step is copyFile, but this will be called later in another goroutine
-			return nil
-		}
+	if resp.isRangeRequest() && writerAt != nil {
+		resp.transfer = newTransferRanges(c.HTTPClient, resp, writerAt)
+		// next step is copyFile, but this will be called later in another goroutine
+		return nil
 	}
 
 	resp.transfer = newTransfer(
@@ -554,6 +552,15 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 
 	bytesCopied, resp.err = resp.transfer.Copy()
 	if resp.err != nil {
+		// If we ran parallel ranges and some of them failed, we need
+		// to truncate the file to the lowest successful range to avoid
+		// having any gaps during a subsequent resume operation.
+		var rangesErr transferRangesErr
+		if errors.As(resp.err, &rangesErr) {
+			if t, ok := resp.writer.(truncater); ok {
+				t.Truncate(rangesErr.LastOffsetEnd)
+			}
+		}
 		return c.closeResponse
 	}
 	closeWriter(resp)

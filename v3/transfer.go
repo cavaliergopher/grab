@@ -130,6 +130,26 @@ func (c *transfer) BPS() float64 {
 	return c.gauge.BPS()
 }
 
+// transferRangesErr wraps a http error with extra information
+// about the offset ranges that were successfully written
+type transferRangesErr struct {
+	// wrapped error
+	err error
+	// the end byte offset of the last successfully written range
+	LastOffsetEnd int64
+}
+
+func (e transferRangesErr) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return "transferRangesErr: nil"
+}
+
+func (e transferRangesErr) Unwrap() error {
+	return e.err
+}
+
 type transferRanges struct {
 	n       int64 // must be 64bit aligned on 386
 	ctx     context.Context
@@ -139,6 +159,7 @@ type transferRanges struct {
 	w       io.WriterAt
 	r       *http.Request
 	length  int64
+	offset  int64
 	workers int
 	bufSize int
 }
@@ -152,6 +173,7 @@ func newTransferRanges(client HTTPClient, headResp *Response, dst io.WriterAt) *
 		w:       dst,
 		r:       headResp.Request.HTTPRequest,
 		length:  headResp.HTTPResponse.ContentLength,
+		offset:  headResp.bytesResumed,
 		workers: headResp.Request.RangeRequestMax,
 		bufSize: headResp.bufferSize,
 	}
@@ -188,23 +210,45 @@ func (c *transferRanges) Copy() (written int64, err error) {
 
 	wg, ctx := errgroup.WithContext(ctx)
 
-	chunkSize := c.length / int64(c.workers)
+	chunkSize := (c.length - c.offset) / int64(c.workers)
 	var start, end int64
+	start += c.offset
+	completed := make([]int64, c.workers)
 	for i := 1; i <= c.workers; i++ {
 		if i == c.workers {
-			end = c.length
+			end = c.offset + c.length
 		} else {
 			end = start + chunkSize
 		}
+		if end > c.length {
+			end = c.length
+		}
+		id := i - 1
 		offset := start
 		limit := end
 		wg.Go(func() error {
-			return c.requestChunk(ctx, offset, limit)
+			e := c.requestChunk(ctx, offset, limit)
+			if e == nil {
+				// when a chunk succeeds, record the ending offset
+				completed[id] = limit
+			}
+			return e
 		})
 		start = end
 	}
 
-	err = wg.Wait()
+	if err = wg.Wait(); err != nil {
+		rangeErr := transferRangesErr{err: err}
+		// find the last successful end offset before an error
+		for _, offset := range completed {
+			if offset == 0 {
+				break
+			}
+			rangeErr.LastOffsetEnd = offset
+		}
+		err = rangeErr
+	}
+
 	return c.N(), err
 }
 

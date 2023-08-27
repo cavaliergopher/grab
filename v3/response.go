@@ -82,7 +82,7 @@ type Response struct {
 	// enabled.
 	storeBuffer bytes.Buffer
 
-	// bytesCompleted specifies the number of bytes which were already
+	// bytesResumed specifies the number of bytes which were already
 	// transferred before this transfer began.
 	bytesResumed int64
 
@@ -259,4 +259,13 @@ func (c *Response) closeResponseBody() error {
 		return nil
 	}
 	return c.HTTPResponse.Body.Close()
+}
+
+func (c *Response) isRangeRequest() bool {
+	if c.Request.RangeRequestMax > 0 && c.acceptRanges {
+		if c.HTTPResponse.ContentLength >= c.Request.RangeRequestMinSize {
+			return true
+		}
+	}
+	return false
 }

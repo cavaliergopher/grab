@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -206,8 +207,8 @@ func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
 	sum := grabtest.DefaultHandlerSHA256ChecksumBytes //grab/v3test.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
-	filename := ".testAutoResume"
 
+	filename := ".testAutoResume"
 	defer os.Remove(filename)
 
 	for i := 0; i < segs; i++ {
@@ -225,6 +226,31 @@ func TestAutoResume(t *testing.T) {
 				testComplete(t, resp)
 			},
 				grabtest.ContentLength(segsize),
+			)
+		})
+	}
+
+	filename2 := ".testAutoResumeRange"
+	defer os.Remove(filename2)
+
+	for i := 0; i < segs; i++ {
+		segsize := (i + 1) * (size / segs)
+		t.Run(fmt.Sprintf("RangeWith%vBytes", segsize), func(t *testing.T) {
+			grabtest.WithTestServer(t, func(url string) {
+				req := mustNewRequest(filename2, url)
+				req.RangeRequestMinSize = 1
+				req.RangeRequestMax = 5
+				if i == segs-1 {
+					req.SetChecksum(sha256.New(), sum, false)
+				}
+				resp := mustDo(req)
+				if i > 0 && !resp.DidResume {
+					t.Errorf("expected Response.DidResume to be true")
+				}
+				testComplete(t, resp)
+			},
+				grabtest.ContentLength(segsize),
+				grabtest.StatusCode(func(r *http.Request) int { return http.StatusPartialContent }),
 			)
 		})
 	}
@@ -975,4 +1001,77 @@ func TestRangeRequest(t *testing.T) {
 			}, opts...)
 		})
 	}
+}
+
+type rangeTestClient struct {
+	fn func(req *http.Request) (*http.Response, error)
+}
+
+func (c *rangeTestClient) Do(req *http.Request) (*http.Response, error) {
+	return c.fn(req)
+}
+
+func TestRangeRequestAutoResume(t *testing.T) {
+	const (
+		NumChunks     = 8
+		Size          = 1048576
+		BadChunkStart = 393216
+	)
+	sum := grabtest.DefaultHandlerSHA256ChecksumBytes
+	expectErr := fmt.Errorf("TEST: cancelled")
+
+	client := NewClient()
+	var wg sync.WaitGroup
+	client.HTTPClient = &rangeTestClient{func(req *http.Request) (*http.Response, error) {
+		wg.Add(1)
+		// Catch a range in the middle and wait for the other
+		// ranges to finish. Then, fail this range.
+		if strings.HasPrefix(req.Header.Get("Range"), fmt.Sprintf("bytes=%v", BadChunkStart)) {
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				wg.Done()
+			}()
+			wg.Wait()
+			return nil, expectErr
+		}
+		defer wg.Done()
+		return DefaultClient.HTTPClient.Do(req)
+	}}
+
+	filename := ".testRangeRequestAutoResume"
+	defer os.Remove(filename)
+
+	opts := []grabtest.HandlerOption{
+		grabtest.ContentLength(int(Size)),
+		grabtest.StatusCode(func(r *http.Request) int {
+			return http.StatusPartialContent
+		}),
+	}
+
+	grabtest.WithTestServer(t, func(url string) {
+		// run a request with parallel range chunks, where a
+		// chunk in the middle is not written
+		req := mustNewRequest(filename, url)
+		req.RangeRequestMinSize = 1
+		req.RangeRequestMax = NumChunks
+		req.SetChecksum(sha256.New(), sum, false)
+		resp := client.Do(req)
+		if err := resp.Err(); !errors.Is(err, expectErr) {
+			t.Fatal(err.Error())
+		}
+		testComplete(t, resp)
+		if resp.BytesComplete() >= resp.Size() {
+			t.Fatalf("Expected BytesComplete() [%v] < Size() [%v]", resp.BytesComplete(), resp.Size())
+		}
+
+		st, err := os.Stat(resp.Filename)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		if st.Size() > BadChunkStart {
+			t.Fatalf("Partially written file size %v is not <= %v", st.Size(), BadChunkStart)
+		}
+	},
+		opts...,
+	)
 }
