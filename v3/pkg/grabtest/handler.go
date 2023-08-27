@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -33,10 +35,15 @@ type handler struct {
 
 func NewHandler(options ...HandlerOption) (http.Handler, error) {
 	h := &handler{
-		statusCodeFunc:  func(req *http.Request) int { return http.StatusOK },
 		methodWhitelist: []string{"GET", "HEAD"},
 		contentLength:   DefaultHandlerContentLength,
 		acceptRanges:    true,
+	}
+	h.statusCodeFunc = func(req *http.Request) int {
+		if h.acceptRanges && strings.HasPrefix(req.Header.Get("Range"), "bytes=") {
+			return http.StatusPartialContent
+		}
+		return http.StatusOK
 	}
 	for _, option := range options {
 		if err := option(h); err != nil {
@@ -106,20 +113,55 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Last-Modified", lastMod.Format(http.TimeFormat))
 
 	// set content-length
-	offset := 0
+	var offset int64
+	length := int64(h.contentLength)
 	if h.acceptRanges {
 		if reqRange := r.Header.Get("Range"); reqRange != "" {
-			if _, err := fmt.Sscanf(reqRange, "bytes=%d-", &offset); err != nil {
+			const b = `bytes=`
+			var limit int64
+			start, end, ok := strings.Cut(reqRange[len(b):], "-")
+			if !ok {
 				httpError(w, http.StatusBadRequest)
 				return
 			}
-			if offset >= h.contentLength {
-				httpError(w, http.StatusRequestedRangeNotSatisfiable)
+			var err error
+			if start != "" {
+				offset, err = strconv.ParseInt(start, 10, 64)
+				if err != nil {
+					httpError(w, http.StatusBadRequest)
+					return
+				}
+				if offset > length {
+					offset = length
+				}
+			}
+			if end != "" {
+				limit, err = strconv.ParseInt(end, 10, 64)
+				if err != nil {
+					httpError(w, http.StatusBadRequest)
+					return
+				}
+			}
+
+			if start != "" && end == "" {
+				length = length - offset
+			} else if start == "" && end != "" {
+				// unsupported range format: -<end>
+				httpError(w, http.StatusBadRequest)
+			} else {
+				length = limit - offset
+			}
+
+			if length > int64(h.contentLength) {
+				code := http.StatusRequestedRangeNotSatisfiable
+				msg := fmt.Sprintf("%s: requested range length %d "+
+					"is greater than ContentLength %d", http.StatusText(code), length, h.contentLength)
+				http.Error(w, msg, code)
 				return
 			}
 		}
 	}
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", h.contentLength-offset))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", length))
 
 	// apply header blacklist
 	for _, key := range h.headerBlacklist {
@@ -133,7 +175,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		// use buffered io to reduce overhead on the reader
 		bw := bufio.NewWriterSize(w, 4096)
-		for i := offset; !isRequestClosed(r) && i < h.contentLength; i++ {
+		for i := offset; !isRequestClosed(r) && i < int64(offset+length); i++ {
 			bw.Write([]byte{byte(i)})
 			if h.rateLimiter != nil {
 				bw.Flush()

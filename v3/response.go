@@ -47,6 +47,10 @@ type Response struct {
 	// previous downloads, as the 'Accept-Ranges: bytes' header is set.
 	CanResume bool
 
+	// specifies that the remote server advertised that it supports partial
+	// requests, as the 'Accept-Ranges: bytes' header is set.
+	acceptRanges bool
+
 	// DidResume specifies that the file transfer resumed a previously incomplete
 	// transfer.
 	DidResume bool
@@ -78,13 +82,13 @@ type Response struct {
 	// enabled.
 	storeBuffer bytes.Buffer
 
-	// bytesCompleted specifies the number of bytes which were already
+	// bytesResumed specifies the number of bytes which were already
 	// transferred before this transfer began.
 	bytesResumed int64
 
 	// transfer is responsible for copying data from the remote server to a local
 	// file, tracking progress and allowing for cancelation.
-	transfer *transfer
+	transfer transferer
 
 	// bufferSize specifies the size in bytes of the transfer buffer.
 	bufferSize int
@@ -242,8 +246,8 @@ func (c *Response) checksumUnsafe() ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	t := newTransfer(c.Request.Context(), nil, c.Request.hash, f, nil)
-	if _, err = t.copy(); err != nil {
+	t := newTransfer(c.Request.Context(), nil, c.Request.hash, f, 0)
+	if _, err = t.Copy(); err != nil {
 		return nil, err
 	}
 	sum := c.Request.hash.Sum(nil)
@@ -255,4 +259,13 @@ func (c *Response) closeResponseBody() error {
 		return nil
 	}
 	return c.HTTPResponse.Body.Close()
+}
+
+func (c *Response) isRangeRequest() bool {
+	if c.Request.RangeRequestMax > 0 && c.acceptRanges {
+		if c.HTTPResponse.ContentLength >= c.Request.RangeRequestMinSize {
+			return true
+		}
+	}
+	return false
 }
