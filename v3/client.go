@@ -49,7 +49,7 @@ type Client struct {
 // NewClient returns a new file download Client, using default configuration.
 func NewClient() *Client {
 	return &Client{
-		UserAgent: "grab",
+		UserAgent: "grab/3"
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
