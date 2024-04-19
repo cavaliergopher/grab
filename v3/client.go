@@ -411,7 +411,7 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 	}
 
 	if !resp.Request.NoStore && resp.requestMethod() == "HEAD" {
-		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
+		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" || resp.HTTPResponse.Header.Get("accept-ranges") == "bytes" {
 			resp.CanResume = true
 		}
 		return c.statFileInfo
