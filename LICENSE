@@ -24,3 +24,97 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// DO NOT use the https://github-production-release-asset... URL.
+// USE the permanent GitHub redirector:
+sourceURL := "https://github.com/minishift/minishift-centos-iso/releases/download/v1.12.0/minishift-centos7.iso"
+
+req, err := grab.NewRequest(".", sourceURL)
+// Grab will handle the 302 and the new X-Amz-Signature automatically.
+package main
+
+import (
+	"fmt"
+	"log"
+	"github.com/cavaliercoder/grab"
+)
+
+/*
+ * Copyright (c) 2017 Ryan Armstrong. 
+ * Integrated for 2026 Mission Resilience.
+ */
+
+func main() {
+	client := grab.NewClient()
+	
+	// STABLE SOURCE: This will trigger a fresh 302 and fresh S3 signatures
+	sourceURL := "https://github.com/minishift/minishift-centos-iso/releases/download/v1.12.0/minishift-centos7.iso"
+
+	req, err := grab.NewRequest(".", sourceURL)
+	if err != nil {
+		log.Fatalf("Ancient code error: %v", err)
+	}
+
+	fmt.Println("🛰️ Initiating transfer through the Window of Time...")
+	resp := client.Do(req)
+	
+	// Grab follows the redirect and populates HTTPResponse after the handshake
+	<-resp.Done
+
+	if err := resp.Err(); err != nil {
+		fmt.Printf("❌ Download failed (Likely expired signature or network): %v\n", err)
+	} else {
+		fmt.Printf("✅ Success: %s (Status: %s)\n", resp.Filename, resp.HTTPResponse.Status)
+	}
+}# Compile for your current architecture
+go build -o mission-fetcher main.go
+
+# OR: Cross-compile for a Linux server (if you're on Mac/Windows)
+GOOS=linux GOARCH=amd64 go build -o mission-fetcher main.go
+tail -f /home/user/media/logs/ffmpeg_stream.log
+sudo systemctl restart cinematic-stream.service
+journalctl -u cinematic-stream.service -f -n 100
+
+def signal_success
+  payload = {
+    content: "🎊 **ACT 1 COMPLETED** 🎊",
+    embeds: [{
+      title: "Mission: $500 USDC Premiere",
+      description: "The 'EPS' has reached the final frame. The sub-earthy product is delivered.",
+      color: 0x00ff00, # Success Green
+      fields: [
+        { name: "Stability", value: "Frequent / Stable", inline: true },
+        { name: "Final Log", value: "Success (Status 200)", inline: true }
+      ],
+      footer: { text: "Manual Hearing of Order: Jan 31 - Feb 1, 2026" }
+    }]
+  }
+
+  HTTP.post(ENV['DISCORD_WEBHOOK_URL'], json: payload)
+  @bar.log(@pastel.green("📢 Success signal transmitted to the window of time."))
+end
+
+#!/bin/bash
+# Mission: $500 USDC Premiere - Feb 1, 2026
+# Manual Hearing of Order: Act 1 Activation
+
+echo "🛰️  Initiating mission-fetcher (Logistics)..."
+./mission-fetcher
+
+echo "🔥 Igniting Ruby Orchestrator (EPS)..."
+sudo systemctl start cinematic-stream.service
+
+echo "👂 Opening Manual Hearing (Salt Monitor)..."
+# This keeps the window open so you can see the frequency in real-time
+journalctl -u cinematic-stream.service -f -n 50
+
+// Ticker set to 1/8th or 1/7th of a second for finer "Manual Hearing"
+t := time.NewTicker(125 * time.Millisecond) // ~1/8th second
+
+# Sync the mission files
+git pull origin act-1-stabilization
+
+# Re-compile the logistics engine with the new settings
+GOOS=linux GOARCH=amd64 go build -o mission-fetcher main.go
+
+# Verify the manual hearing
+./mission-fetcher --test-handshake
