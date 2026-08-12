@@ -1,10 +1,16 @@
 # grab
 
-[![GoDoc](https://godoc.org/github.com/cavaliercoder/grab?status.svg)](https://godoc.org/github.com/cavaliercoder/grab) [![Build Status](https://travis-ci.org/cavaliercoder/grab.svg?branch=master)](https://travis-ci.org/cavaliercoder/grab) [![Go Report Card](https://goreportcard.com/badge/github.com/cavaliercoder/grab)](https://goreportcard.com/report/github.com/cavaliercoder/grab)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cavaliergopher/grab/v3.svg)](https://pkg.go.dev/github.com/cavaliergopher/grab/v3) [![Build Status](https://github.com/cavaliergopher/grab/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/cavaliergopher/grab/actions/workflows/test.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/cavaliergopher/grab/v3)](https://goreportcard.com/report/github.com/cavaliergopher/grab/v3)
 
 *Downloading the internet, one goroutine at a time!*
 
+To use the package in your own program:
+
 	$ go get github.com/cavaliergopher/grab/v3
+
+To install the `grab` command line downloader:
+
+	$ go install github.com/cavaliergopher/grab/v3/cmd/grab@latest
 
 Grab is a Go package for downloading files from the internet with the following
 rad features:
@@ -70,7 +76,7 @@ Loop:
 		case <-t.C:
 			fmt.Printf("  transferred %v / %v bytes (%.2f%%)\n",
 				resp.BytesComplete(),
-				resp.Size,
+				resp.Size(),
 				100*resp.Progress())
 
 		case <-resp.Done:
