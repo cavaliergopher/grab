@@ -62,8 +62,14 @@ func guessFilename(resp *http.Response) (string, error) {
 		return "", ErrNoFilename
 	}
 
+	// filepath.Base returns the path separator when the cleaned path is the
+	// root, and that separator is platform specific: "/" on unix but "\" on
+	// Windows. Both must be rejected, or a Content-Disposition filename such
+	// as "." or "filename/.." yields a filename of "\" on Windows instead of
+	// an error.
 	filename = filepath.Base(path.Clean("/" + filename))
-	if filename == "" || filename == "." || filename == "/" {
+	if filename == "" || filename == "." || filename == "/" ||
+		filename == string(filepath.Separator) {
 		return "", ErrNoFilename
 	}
 

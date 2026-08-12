@@ -36,9 +36,9 @@ func TestFilenameResolution(t *testing.T) {
 	}{
 		{"Using Request.Filename", ".testWithFilename", "/url-filename", "header-filename", ".testWithFilename"},
 		{"Using Content-Disposition Header", "", "/url-filename", ".testWithHeaderFilename", ".testWithHeaderFilename"},
-		{"Using Content-Disposition Header with target directory", ".test", "/url-filename", "header-filename", ".test/header-filename"},
+		{"Using Content-Disposition Header with target directory", ".test", "/url-filename", "header-filename", filepath.Join(".test", "header-filename")},
 		{"Using URL Path", "", "/.testWithURLFilename?params-filename", "", ".testWithURLFilename"},
-		{"Using URL Path with target directory", ".test", "/url-filename?garbage", "", ".test/url-filename"},
+		{"Using URL Path with target directory", ".test", "/url-filename?garbage", "", filepath.Join(".test", "url-filename")},
 		{"Failure", "", "", "", ""},
 	}
 
@@ -482,14 +482,14 @@ func TestCancelHangingResponse(t *testing.T) {
 
 // TestNestedDirectory tests that missing subdirectories are created.
 func TestNestedDirectory(t *testing.T) {
-	dir := "./.testNested/one/two/three"
+	dir := filepath.Join(".testNested", "one", "two", "three")
 	filename := ".testNestedFile"
-	expect := dir + "/" + filename
+	expect := filepath.Join(dir, filename)
 
 	t.Run("Create", func(t *testing.T) {
 		grabtest.WithTestServer(t, func(url string) {
 			resp := mustDo(mustNewRequest(expect, url+"/"+filename))
-			defer os.RemoveAll("./.testNested/")
+			defer os.RemoveAll(".testNested")
 			if resp.Filename != expect {
 				t.Errorf("expected nested Request.Filename to be %v, got %v", expect, resp.Filename)
 			}
@@ -839,7 +839,7 @@ func TestMissingContentLength(t *testing.T) {
 }
 
 func TestNoStore(t *testing.T) {
-	filename := ".testSubdir/testNoStore"
+	filename := filepath.Join(".testSubdir", "testNoStore")
 	t.Run("DefaultCase", func(t *testing.T) {
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
