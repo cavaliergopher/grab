@@ -353,7 +353,19 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 
 	resp.HTTPResponse, resp.err = c.doHTTPRequest(hreq)
 	if resp.err != nil {
-		return c.closeResponse
+		// Some servers mishandle HEAD and close the connection or otherwise
+		// fail, even though they serve GET for the same resource correctly.
+		// The HEAD request is only an optimisation - it tells us the size and
+		// whether ranged requests are supported - so a failure here is not
+		// fatal and we fall through to the GET request.
+		//
+		// A cancelled context is not a server fault and must not be retried.
+		if resp.ctx.Err() != nil {
+			return c.closeResponse
+		}
+		resp.err = nil
+		resp.HTTPResponse = nil
+		return c.getRequest
 	}
 	resp.HTTPResponse.Body.Close()
 

@@ -964,3 +964,102 @@ func TestUserAgent(t *testing.T) {
 		})
 	}
 }
+
+// headBreakServer returns a test server which accepts and then immediately
+// drops the connection for any HEAD request, without sending a response, but
+// serves GET requests normally. This emulates servers such as
+// speed.hetzner.de, reported in #100.
+func headBreakServer(t *testing.T, content []byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Errorf("cannot hijack connection: %v", err)
+					return
+				}
+				conn.Close()
+				return
+			}
+			w.Header().Set("Accept-Ranges", "bytes")
+			http.ServeContent(
+				w, r, "testHeadBreak", time.Time{}, bytes.NewReader(content))
+		}))
+}
+
+// TestHeadRequestFailureFallsBackToGet asserts that a server which fails to
+// serve HEAD requests does not prevent a download, as the HEAD request is only
+// an optimization. See #100.
+func TestHeadRequestFailureFallsBackToGet(t *testing.T) {
+	content := make([]byte, 32768)
+	for i := range content {
+		content[i] = byte(i)
+	}
+
+	t.Run("UnknownFilename", func(t *testing.T) {
+		srv := headBreakServer(t, content)
+		defer srv.Close()
+
+		// an empty destination forces a HEAD request to resolve the filename
+		filename := ".testHeadBreakUnknown"
+		defer os.Remove(filename)
+		resp := mustDo(mustNewRequest("", srv.URL+"/"+filename))
+		testComplete(t, resp)
+		if err := resp.Err(); err != nil {
+			t.Fatalf("expected download to succeed, got: %v", err)
+		}
+		if resp.Filename != filename {
+			t.Errorf("expected filename: %s, got: %s", filename, resp.Filename)
+		}
+		assertFileContent(t, resp.Filename, content)
+	})
+
+	t.Run("ExistingPartialFile", func(t *testing.T) {
+		srv := headBreakServer(t, content)
+		defer srv.Close()
+
+		// an existing file forces a HEAD request to check for resumability
+		filename := ".testHeadBreakPartial"
+		defer os.Remove(filename)
+		if err := os.WriteFile(filename, content[:1024], 0666); err != nil {
+			t.Fatal(err)
+		}
+
+		resp := mustDo(mustNewRequest(filename, srv.URL))
+		testComplete(t, resp)
+		if err := resp.Err(); err != nil {
+			t.Fatalf("expected download to succeed, got: %v", err)
+		}
+		assertFileContent(t, resp.Filename, content)
+	})
+
+	t.Run("CancelledContextIsNotRetried", func(t *testing.T) {
+		srv := headBreakServer(t, content)
+		defer srv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		filename := ".testHeadBreakCancelled"
+		defer os.Remove(filename)
+		req := mustNewRequest("", srv.URL+"/"+filename).WithContext(ctx)
+		resp := DefaultClient.Do(req)
+		if err := resp.Err(); !errors.Is(err, context.Canceled) {
+			t.Errorf("expected: %v, got: %v", context.Canceled, err)
+		}
+	})
+}
+
+func assertFileContent(t *testing.T, filename string, expect []byte) {
+	t.Helper()
+	b, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b, expect) {
+		t.Errorf(
+			"content mismatch for %s: expected %d bytes, got %d bytes",
+			filename, len(expect), len(b))
+	}
+}
