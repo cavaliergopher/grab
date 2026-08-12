@@ -1,9 +1,6 @@
 package grab
 
-import (
-	"fmt"
-	"os"
-)
+import "os"
 
 // Get sends a HTTP request and downloads the content of the requested URL to
 // the given destination file path. The caller is blocked until the download is
@@ -47,7 +44,7 @@ func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, err
 		return nil, err
 	}
 	if !fi.IsDir() {
-		return nil, fmt.Errorf("destination is not a directory")
+		return nil, ErrNotADirectory
 	}
 
 	reqs := make([]*Request, len(urlStrs))

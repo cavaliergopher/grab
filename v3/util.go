@@ -32,10 +32,10 @@ func mkdirp(path string) error {
 	dir := filepath.Dir(path)
 	if fi, err := os.Stat(dir); err != nil {
 		if !os.IsNotExist(err) {
-			return fmt.Errorf("error checking destination directory: %v", err)
+			return fmt.Errorf("error checking destination directory: %w", err)
 		}
 		if err := os.MkdirAll(dir, 0777); err != nil {
-			return fmt.Errorf("error creating destination directory: %v", err)
+			return fmt.Errorf("error creating destination directory: %w", err)
 		}
 	} else if !fi.IsDir() {
 		panic("grab: developer error: destination path is not directory")

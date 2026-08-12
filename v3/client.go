@@ -316,7 +316,7 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 			if err := os.Remove(resp.Filename); err != nil {
 				// err should be os.PathError and include file path
 				resp.err = fmt.Errorf(
-					"cannot remove downloaded file with checksum mismatch: %v",
+					"cannot remove downloaded file with checksum mismatch: %w",
 					err)
 			}
 		}

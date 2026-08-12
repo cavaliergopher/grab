@@ -25,6 +25,10 @@ var (
 
 	// ErrFileExists indicates that the destination path already exists.
 	ErrFileExists = errors.New("file exists")
+
+	// ErrNotADirectory indicates that the given destination path exists but is
+	// not a directory.
+	ErrNotADirectory = errors.New("destination is not a directory")
 )
 
 // StatusCodeError indicates that the server response had a status code that
@@ -37,6 +41,6 @@ func (err StatusCodeError) Error() string {
 
 // IsStatusCodeError returns true if the given error is of type StatusCodeError.
 func IsStatusCodeError(err error) bool {
-	_, ok := err.(StatusCodeError)
-	return ok
+	var codeErr StatusCodeError
+	return errors.As(err, &codeErr)
 }
