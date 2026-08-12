@@ -1,0 +1,90 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Build
+        working-directory: v3/cmd/grab
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          name="grab_${tag}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/$name"
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build -trimpath -ldflags "-s -w" -o "dist/$name/grab$ext" .
+          cp ../../../LICENSE ../../../README.md "dist/$name/"
+          cd dist
+          if [ "$GOOS" = "windows" ]; then
+            zip -r "$name.zip" "$name"
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grab_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            v3/cmd/grab/dist/*.tar.gz
+            v3/cmd/grab/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload --clobber "$tag" dist/*
+          else
+            gh release create "$tag" --title "$tag" --generate-notes dist/*
+          fi
