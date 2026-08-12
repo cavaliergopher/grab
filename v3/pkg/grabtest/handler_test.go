@@ -2,7 +2,7 @@ package grabtest
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -84,7 +84,7 @@ func TestHandlerContentLength(t *testing.T) {
 
 			AssertHTTPResponseHeader(t, resp, "Content-Length", "%d", test.ExpectHeaderLen)
 
-			b, err := ioutil.ReadAll(resp.Body)
+			b, err := io.ReadAll(resp.Body)
 			if err != nil {
 				panic(err)
 			}

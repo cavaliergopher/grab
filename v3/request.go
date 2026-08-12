@@ -26,7 +26,7 @@ type Request struct {
 
 	// Tag is an arbitrary interface which may be used to relate a Request to
 	// other data.
-	Tag interface{}
+	Tag any
 
 	// HTTPRequest specifies the http.Request to be sent to the remote server to
 	// initiate a file transfer. It includes request configuration such as URL,

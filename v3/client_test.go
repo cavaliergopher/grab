@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -626,7 +625,7 @@ func TestBeforeCopyHook(t *testing.T) {
 	// Assert that an existing local file will not be truncated prior to the
 	// BeforeCopy hook has a chance to cancel the request
 	t.Run("NoTruncate", func(t *testing.T) {
-		tfile, err := ioutil.TempFile("", "grab_client_test.*.file")
+		tfile, err := os.CreateTemp("", "grab_client_test.*.file")
 		if err != nil {
 			t.Fatal(err)
 		}

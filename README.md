@@ -23,7 +23,7 @@ rad features:
 * Download batches of files concurrently
 * Apply rate limiters
 
-Requires Go v1.7+
+Requires Go v1.23+
 
 ## Example
 
