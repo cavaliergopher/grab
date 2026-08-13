@@ -13,6 +13,14 @@ import (
 	"time"
 )
 
+// DefaultUserAgent is the User-Agent string sent by clients returned from
+// NewClient, including DefaultClient.
+//
+// It is a product token followed by a version, as required by RFC 9110
+// §10.1.5. Some servers - notably GitHub - reject requests whose User-Agent
+// does not take this form.
+const DefaultUserAgent = "grab/3"
+
 // HTTPClient provides an interface allowing us to perform HTTP requests.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -49,7 +57,7 @@ type Client struct {
 // NewClient returns a new file download Client, using default configuration.
 func NewClient() *Client {
 	return &Client{
-		UserAgent: "grab/3",
+		UserAgent: DefaultUserAgent,
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,

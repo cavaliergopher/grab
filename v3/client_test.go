@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -911,4 +912,55 @@ func TestNoStore(t *testing.T) {
 			}
 		})
 	})
+}
+
+// TestUserAgent tests that a spec-compliant User-Agent is sent by default, and
+// that it can be overridden on the Client or on an individual Request.
+func TestUserAgent(t *testing.T) {
+	tests := []struct {
+		Name      string
+		UserAgent string
+		Header    string
+		Expect    string
+	}{
+		{"Default", DefaultUserAgent, "", DefaultUserAgent},
+		{"Client override", "test-client/1.2.3", "", "test-client/1.2.3"},
+		{"Request override", "test-client/1.2.3", "test-request/4.5.6", "test-request/4.5.6"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.Name, func(t *testing.T) {
+			got := make(chan string, 4)
+			srv := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					got <- r.Header.Get("User-Agent")
+				}))
+			defer srv.Close()
+
+			filename := ".testUserAgent"
+			defer os.Remove(filename)
+
+			client := NewClient()
+			client.UserAgent = test.UserAgent
+			req := mustNewRequest(filename, srv.URL)
+			if test.Header != "" {
+				req.HTTPRequest.Header.Set("User-Agent", test.Header)
+			}
+			if err := client.Do(req).Err(); err != nil {
+				t.Fatalf("error in Client.Do(): %v", err)
+			}
+
+			close(got)
+			n := 0
+			for ua := range got {
+				n++
+				if ua != test.Expect {
+					t.Errorf("expected User-Agent: %q, got: %q", test.Expect, ua)
+				}
+			}
+			if n == 0 {
+				t.Error("no requests reached the test server")
+			}
+		})
+	}
 }
