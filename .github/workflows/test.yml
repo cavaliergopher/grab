@@ -2,12 +2,15 @@ name: test
 
 on:
   push:
-    branches: [master]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -27,7 +30,7 @@ jobs:
 
       - name: Test
         working-directory: v3
-        run: go test -v -cover -race ./...
+        run: go test -v -cover -race -count=1 -shuffle=on ./...
 
       - name: Build CLI
         working-directory: v3/cmd/grab
@@ -43,19 +46,99 @@ jobs:
           go-version: stable
           cache: false
 
-      - name: gofmt
+      - name: go fmt
         working-directory: v3
         run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "The following files need gofmt:"
-            echo "$unformatted"
+          go fmt ./...
+          if ! git diff --exit-code; then
+            echo "::error::Some files are not formatted. Run 'go fmt ./...' and commit the result."
             exit 1
           fi
 
       - name: go vet
         working-directory: v3
         run: go vet ./...
+
+      - name: staticcheck
+        working-directory: v3
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+
+  cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Build CLI
+        working-directory: v3/cmd/grab
+        run: go build -o "$RUNNER_TEMP/grab" .
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/www" "$RUNNER_TEMP/dl"
+          head -c 1048576 /dev/urandom > "$RUNNER_TEMP/www/payload.bin"
+          (cd "$RUNNER_TEMP/www" && python3 -m http.server 18080 &>/dev/null) &
+          server=$!
+          trap 'kill $server' EXIT
+          for _ in $(seq 1 20); do
+            curl -sfo /dev/null http://127.0.0.1:18080/payload.bin && break
+            sleep 0.5
+          done
+
+          # a successful download exits 0 and matches the source byte for byte
+          cd "$RUNNER_TEMP/dl"
+          "$RUNNER_TEMP/grab" http://127.0.0.1:18080/payload.bin
+          cmp "$RUNNER_TEMP/www/payload.bin" "$RUNNER_TEMP/dl/payload.bin"
+
+          # a failed download is reported in the exit code
+          if "$RUNNER_TEMP/grab" http://127.0.0.1:18080/missing.bin; then
+            echo "expected a non-zero exit code for a missing file"
+            exit 1
+          fi
+
+  tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: go mod tidy is clean
+        working-directory: v3
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+  cross-compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows, freebsd]
+        goarch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Build
+        working-directory: v3
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build ./...
 
   govulncheck:
     runs-on: ubuntu-latest
