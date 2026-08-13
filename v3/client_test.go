@@ -27,6 +27,11 @@ import (
 // Content-Disposition headers or a URL path - with or without an existing
 // target directory.
 func TestFilenameResolution(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "downloads")
+	if err := os.Mkdir(dir, 0777); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		Name               string
 		Filename           string
@@ -34,19 +39,13 @@ func TestFilenameResolution(t *testing.T) {
 		AttachmentFilename string
 		Expect             string
 	}{
-		{"Using Request.Filename", ".testWithFilename", "/url-filename", "header-filename", ".testWithFilename"},
+		{"Using Request.Filename", filepath.Join(dir, "testWithFilename"), "/url-filename", "header-filename", filepath.Join(dir, "testWithFilename")},
 		{"Using Content-Disposition Header", "", "/url-filename", ".testWithHeaderFilename", ".testWithHeaderFilename"},
-		{"Using Content-Disposition Header with target directory", ".test", "/url-filename", "header-filename", filepath.Join(".test", "header-filename")},
+		{"Using Content-Disposition Header with target directory", dir, "/url-filename", "header-filename", filepath.Join(dir, "header-filename")},
 		{"Using URL Path", "", "/.testWithURLFilename?params-filename", "", ".testWithURLFilename"},
-		{"Using URL Path with target directory", ".test", "/url-filename?garbage", "", filepath.Join(".test", "url-filename")},
+		{"Using URL Path with target directory", dir, "/url-filename?garbage", "", filepath.Join(dir, "url-filename")},
 		{"Failure", "", "", "", ""},
 	}
-
-	err := os.Mkdir(".test", 0777)
-	if err != nil {
-		panic(err)
-	}
-	defer os.RemoveAll(".test")
 
 	for _, test := range tests {
 		t.Run(test.Name, func(t *testing.T) {
@@ -120,8 +119,9 @@ func TestChecksums(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("With%s%s", comparison, test.sum[:8]), func(t *testing.T) {
-			filename := fmt.Sprintf(".testChecksum-%s-%s", comparison, test.sum[:8])
-			defer os.Remove(filename)
+			filename := filepath.Join(
+				t.TempDir(),
+				fmt.Sprintf("testChecksum-%s-%s", comparison, test.sum[:8]))
 
 			grabtest.WithTestServer(t, func(url string) {
 				req := mustNewRequest(filename, url)
@@ -174,11 +174,11 @@ func TestContentLength(t *testing.T) {
 				opts = append(opts, grabtest.MethodWhitelist("GET"))
 			}
 
+			filename := filepath.Join(t.TempDir(), "testSize-mismatch-head")
 			grabtest.WithTestServer(t, func(url string) {
-				req := mustNewRequest(".testSize-mismatch-head", url)
+				req := mustNewRequest(filename, url)
 				req.Size = size
 				resp := DefaultClient.Do(req)
-				defer os.Remove(resp.Filename)
 				err := resp.Err()
 				if test.Match {
 					if err == ErrBadLength {
@@ -206,9 +206,7 @@ func TestAutoResume(t *testing.T) {
 	segs := 8
 	size := 1048576
 	sum := grabtest.DefaultHandlerSHA256ChecksumBytes //grab/v3test.MustHexDecodeString("fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83")
-	filename := ".testAutoResume"
-
-	defer os.Remove(filename)
+	filename := filepath.Join(t.TempDir(), "testAutoResume")
 
 	for i := 0; i < segs; i++ {
 		segsize := (i + 1) * (size / segs)
@@ -321,8 +319,7 @@ func TestAutoResume(t *testing.T) {
 }
 
 func TestSkipExisting(t *testing.T) {
-	filename := ".testSkipExisting"
-	defer os.Remove(filename)
+	filename := filepath.Join(t.TempDir(), "testSkipExisting")
 
 	// download a file
 	grabtest.WithTestServer(t, func(url string) {
@@ -367,10 +364,14 @@ func TestBatch(t *testing.T) {
 	// test with 4 workers and with one per request
 	grabtest.WithTestServer(t, func(url string) {
 		for _, workerCount := range []int{4, 0} {
+			// download to a fresh directory for each run, so that no request
+			// resumes a file downloaded by the previous run
+			dir := t.TempDir()
+
 			// create requests
 			reqs := make([]*Request, tests)
 			for i := 0; i < len(reqs); i++ {
-				filename := fmt.Sprintf(".testBatch.%d", i+1)
+				filename := filepath.Join(dir, fmt.Sprintf("testBatch.%d", i+1))
 				reqs[i] = mustNewRequest(filename, url+fmt.Sprintf("/request_%d?", i+1))
 				reqs[i].Label = fmt.Sprintf("Test %d", i+1)
 				reqs[i].SetChecksum(sha256.New(), sum, false)
@@ -388,11 +389,6 @@ func TestBatch(t *testing.T) {
 				testComplete(t, resp)
 				if err := resp.Err(); err != nil {
 					t.Errorf("%s: %v", resp.Filename, err)
-				}
-
-				// remove test file
-				if resp.IsComplete() {
-					os.Remove(resp.Filename) // ignore errors
 				}
 				i++
 			}
@@ -412,10 +408,12 @@ func TestCancelContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	dir := t.TempDir()
+
 	grabtest.WithTestServer(t, func(url string) {
 		reqs := make([]*Request, tests)
 		for i := 0; i < tests; i++ {
-			req := mustNewRequest("", fmt.Sprintf("%s/.testCancelContext%d", url, i))
+			req := mustNewRequest(dir, fmt.Sprintf("%s/testCancelContext%d", url, i))
 			reqs[i] = req.WithContext(ctx)
 		}
 
@@ -430,9 +428,6 @@ func TestCancelContext(t *testing.T) {
 			if resp.BytesComplete() >= int64(fileSize) {
 				t.Errorf("expected Response.BytesComplete: < %d, got: %d", fileSize, resp.BytesComplete())
 			}
-
-			// remove test file; the transfer is done once Err has returned
-			os.Remove(resp.Filename) // ignore errors
 		}
 	},
 		grabtest.ContentLength(fileSize),
@@ -444,12 +439,12 @@ func TestCancelContext(t *testing.T) {
 func TestCancelHangingResponse(t *testing.T) {
 	fileSize := 10
 	client := NewClient()
+	dir := t.TempDir()
 
 	grabtest.WithTestServer(t, func(url string) {
-		req := mustNewRequest("", fmt.Sprintf("%s/.testCancelHangingResponse", url))
+		req := mustNewRequest(dir, fmt.Sprintf("%s/testCancelHangingResponse", url))
 
 		resp := client.Do(req)
-		defer os.Remove(resp.Filename)
 
 		// Wait for some bytes to be transferred
 		for resp.BytesComplete() == 0 {
@@ -480,14 +475,12 @@ func TestCancelHangingResponse(t *testing.T) {
 
 // TestNestedDirectory tests that missing subdirectories are created.
 func TestNestedDirectory(t *testing.T) {
-	dir := filepath.Join(".testNested", "one", "two", "three")
-	filename := ".testNestedFile"
-	expect := filepath.Join(dir, filename)
+	filename := "testNestedFile"
 
 	t.Run("Create", func(t *testing.T) {
+		expect := filepath.Join(t.TempDir(), "one", "two", "three", filename)
 		grabtest.WithTestServer(t, func(url string) {
 			resp := mustDo(mustNewRequest(expect, url+"/"+filename))
-			defer os.RemoveAll(".testNested")
 			if resp.Filename != expect {
 				t.Errorf("expected nested Request.Filename to be %v, got %v", expect, resp.Filename)
 			}
@@ -495,6 +488,7 @@ func TestNestedDirectory(t *testing.T) {
 	})
 
 	t.Run("No create", func(t *testing.T) {
+		expect := filepath.Join(t.TempDir(), "one", "two", "three", filename)
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(expect, url+"/"+filename)
 			req.NoCreateDirectories = true
@@ -510,8 +504,7 @@ func TestNestedDirectory(t *testing.T) {
 // TestRemoteTime tests that the timestamp of the downloaded file can be set
 // according to the timestamp of the remote file.
 func TestRemoteTime(t *testing.T) {
-	filename := "./.testRemoteTime"
-	defer os.Remove(filename)
+	filename := filepath.Join(t.TempDir(), "testRemoteTime")
 
 	// random time between epoch and now
 	expect := time.Unix(rand.Int63n(time.Now().Unix()), 0)
@@ -531,10 +524,8 @@ func TestRemoteTime(t *testing.T) {
 }
 
 func TestResponseCode(t *testing.T) {
-	filename := "./.testResponseCode"
-
 	t.Run("With404", func(t *testing.T) {
-		defer os.Remove(filename)
+		filename := filepath.Join(t.TempDir(), "testResponseCode")
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
 			resp := DefaultClient.Do(req)
@@ -552,7 +543,7 @@ func TestResponseCode(t *testing.T) {
 	})
 
 	t.Run("WithIgnoreNon2XX", func(t *testing.T) {
-		defer os.Remove(filename)
+		filename := filepath.Join(t.TempDir(), "testResponseCode")
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
 			req.IgnoreBadStatusCodes = true
@@ -567,9 +558,8 @@ func TestResponseCode(t *testing.T) {
 }
 
 func TestBeforeCopyHook(t *testing.T) {
-	filename := "./.testBeforeCopy"
 	t.Run("Noop", func(t *testing.T) {
-		defer os.RemoveAll(filename)
+		filename := filepath.Join(t.TempDir(), "testBeforeCopy")
 		grabtest.WithTestServer(t, func(url string) {
 			called := false
 			req := mustNewRequest(filename, url)
@@ -601,7 +591,7 @@ func TestBeforeCopyHook(t *testing.T) {
 	})
 
 	t.Run("WithError", func(t *testing.T) {
-		defer os.RemoveAll(filename)
+		filename := filepath.Join(t.TempDir(), "testBeforeCopy")
 		grabtest.WithTestServer(t, func(url string) {
 			testError := errors.New("test")
 			req := mustNewRequest(filename, url)
@@ -623,11 +613,13 @@ func TestBeforeCopyHook(t *testing.T) {
 	// Assert that an existing local file will not be truncated prior to the
 	// BeforeCopy hook has a chance to cancel the request
 	t.Run("NoTruncate", func(t *testing.T) {
-		tfile, err := os.CreateTemp("", "grab_client_test.*.file")
+		tfile, err := os.CreateTemp(t.TempDir(), "grab_client_test.*.file")
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer os.Remove(tfile.Name())
+
+		// close the handle before the temporary directory is removed
+		defer tfile.Close()
 
 		const size = 128
 		_, err = tfile.Write(bytes.Repeat([]byte("x"), size))
@@ -665,9 +657,8 @@ func TestBeforeCopyHook(t *testing.T) {
 }
 
 func TestAfterCopyHook(t *testing.T) {
-	filename := "./.testAfterCopy"
 	t.Run("Noop", func(t *testing.T) {
-		defer os.RemoveAll(filename)
+		filename := filepath.Join(t.TempDir(), "testAfterCopy")
 		grabtest.WithTestServer(t, func(url string) {
 			called := false
 			req := mustNewRequest(filename, url)
@@ -699,7 +690,7 @@ func TestAfterCopyHook(t *testing.T) {
 	})
 
 	t.Run("WithError", func(t *testing.T) {
-		defer os.RemoveAll(filename)
+		filename := filepath.Join(t.TempDir(), "testAfterCopy")
 		grabtest.WithTestServer(t, func(url string) {
 			testError := errors.New("test")
 			req := mustNewRequest(filename, url)
@@ -721,10 +712,9 @@ func TestAfterCopyHook(t *testing.T) {
 
 func TestIssue37(t *testing.T) {
 	// ref: https://github.com/cavaliergopher/grab/v3/issues/37
-	filename := "./.testIssue37"
+	filename := filepath.Join(t.TempDir(), "testIssue37")
 	largeSize := int64(2097152)
 	smallSize := int64(1048576)
-	defer os.RemoveAll(filename)
 
 	// download large file
 	grabtest.WithTestServer(t, func(url string) {
@@ -764,7 +754,8 @@ func TestIssue37(t *testing.T) {
 // Fixes: https://github.com/cavaliergopher/grab/v3/issues/43
 func TestHeadBadStatus(t *testing.T) {
 	expect := http.StatusOK
-	filename := ".testIssue43"
+	filename := "testIssue43"
+	dir := t.TempDir()
 
 	statusFunc := func(r *http.Request) int {
 		if r.Method == "HEAD" {
@@ -775,7 +766,7 @@ func TestHeadBadStatus(t *testing.T) {
 
 	grabtest.WithTestServer(t, func(url string) {
 		testURL := fmt.Sprintf("%s/%s", url, filename)
-		resp := mustDo(mustNewRequest("", testURL))
+		resp := mustDo(mustNewRequest(dir, testURL))
 		if resp.HTTPResponse.StatusCode != expect {
 			t.Errorf(
 				"expected status code: %d, got:% d",
@@ -803,8 +794,9 @@ func TestMissingContentLength(t *testing.T) {
 		grabtest.HeaderBlacklist("Content-Length"),
 		grabtest.TimeToFirstByte(time.Millisecond * 100), // delay for initial read
 	}
+	filename := filepath.Join(t.TempDir(), "testMissingContentLength")
 	grabtest.WithTestServer(t, func(url string) {
-		req := mustNewRequest(".testMissingContentLength", url)
+		req := mustNewRequest(filename, url)
 		req.SetChecksum(
 			md5.New(),
 			grabtest.DefaultHandlerMD5ChecksumBytes,
@@ -837,7 +829,7 @@ func TestMissingContentLength(t *testing.T) {
 }
 
 func TestNoStore(t *testing.T) {
-	filename := filepath.Join(".testSubdir", "testNoStore")
+	filename := filepath.Join(t.TempDir(), "testSubdir", "testNoStore")
 	t.Run("DefaultCase", func(t *testing.T) {
 		grabtest.WithTestServer(t, func(url string) {
 			req := mustNewRequest(filename, url)
@@ -934,8 +926,7 @@ func TestUserAgent(t *testing.T) {
 				}))
 			defer srv.Close()
 
-			filename := ".testUserAgent"
-			defer os.Remove(filename)
+			filename := filepath.Join(t.TempDir(), "testUserAgent")
 
 			client := NewClient()
 			client.UserAgent = test.UserAgent
@@ -998,16 +989,16 @@ func TestHeadRequestFailureFallsBackToGet(t *testing.T) {
 		srv := headBreakServer(t, content)
 		defer srv.Close()
 
-		// an empty destination forces a HEAD request to resolve the filename
-		filename := ".testHeadBreakUnknown"
-		defer os.Remove(filename)
-		resp := mustDo(mustNewRequest("", srv.URL+"/"+filename))
+		// a destination directory forces a HEAD request to resolve the filename
+		dir := t.TempDir()
+		filename := "testHeadBreakUnknown"
+		resp := mustDo(mustNewRequest(dir, srv.URL+"/"+filename))
 		testComplete(t, resp)
 		if err := resp.Err(); err != nil {
 			t.Fatalf("expected download to succeed, got: %v", err)
 		}
-		if resp.Filename != filename {
-			t.Errorf("expected filename: %s, got: %s", filename, resp.Filename)
+		if expect := filepath.Join(dir, filename); resp.Filename != expect {
+			t.Errorf("expected filename: %s, got: %s", expect, resp.Filename)
 		}
 		assertFileContent(t, resp.Filename, content)
 	})
@@ -1017,8 +1008,7 @@ func TestHeadRequestFailureFallsBackToGet(t *testing.T) {
 		defer srv.Close()
 
 		// an existing file forces a HEAD request to check for resumability
-		filename := ".testHeadBreakPartial"
-		defer os.Remove(filename)
+		filename := filepath.Join(t.TempDir(), "testHeadBreakPartial")
 		if err := os.WriteFile(filename, content[:1024], 0666); err != nil {
 			t.Fatal(err)
 		}
@@ -1038,9 +1028,9 @@ func TestHeadRequestFailureFallsBackToGet(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		filename := ".testHeadBreakCancelled"
-		defer os.Remove(filename)
-		req := mustNewRequest("", srv.URL+"/"+filename).WithContext(ctx)
+		req := mustNewRequest(
+			t.TempDir(),
+			srv.URL+"/testHeadBreakCancelled").WithContext(ctx)
 		resp := DefaultClient.Do(req)
 		if err := resp.Err(); !errors.Is(err, context.Canceled) {
 			t.Errorf("expected: %v, got: %v", context.Canceled, err)

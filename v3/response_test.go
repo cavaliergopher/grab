@@ -2,7 +2,7 @@ package grab
 
 import (
 	"bytes"
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -47,8 +47,7 @@ func testComplete(t *testing.T, resp *Response) {
 // TestResponseProgress tests the functions which indicate the progress of an
 // in-process file transfer.
 func TestResponseProgress(t *testing.T) {
-	filename := ".testResponseProgress"
-	defer os.Remove(filename)
+	filename := filepath.Join(t.TempDir(), "testResponseProgress")
 
 	sleep := 300 * time.Millisecond
 	size := 1024 * 8 // bytes

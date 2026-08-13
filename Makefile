@@ -39,6 +39,5 @@ install:
 
 clean:
 	cd v3 && $(GO) clean -x ./...
-	rm -rvf ./.test*
 
 .PHONY: all check fmt fmt-check vet tidy test install clean

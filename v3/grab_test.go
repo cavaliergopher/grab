@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cavaliergopher/grab/v3/pkg/grabtest"
@@ -35,8 +36,7 @@ func TestMain(m *testing.M) {
 
 // TestGet tests grab.Get
 func TestGet(t *testing.T) {
-	filename := ".testGet"
-	defer os.Remove(filename)
+	filename := filepath.Join(t.TempDir(), "testGet")
 	grabtest.WithTestServer(t, func(url string) {
 		resp, err := Get(filename, url)
 		if err != nil {

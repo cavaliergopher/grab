@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -35,11 +36,10 @@ func TestIsStatusCodeError(t *testing.T) {
 // TestGetBatchNotADirectory asserts that GetBatch reports a comparable error
 // when the destination is not a directory.
 func TestGetBatchNotADirectory(t *testing.T) {
-	filename := ".testNotADirectory"
+	filename := filepath.Join(t.TempDir(), "testNotADirectory")
 	if err := os.WriteFile(filename, []byte("not a directory"), 0666); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(filename)
 
 	_, err := GetBatch(1, filename, "http://localhost/example")
 	if !errors.Is(err, ErrNotADirectory) {
@@ -53,16 +53,15 @@ func TestMkdirpErrorWrapping(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("test is meaningless as root")
 	}
-	parent := ".testMkdirpDenied"
+	parent := filepath.Join(t.TempDir(), "testMkdirpDenied")
 	if err := os.Mkdir(parent, 0500); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		os.Chmod(parent, 0700)
-		os.RemoveAll(parent)
-	}()
 
-	err := mkdirp(parent + "/child/file")
+	// restore write permission so that the temporary directory can be removed
+	defer os.Chmod(parent, 0700)
+
+	err := mkdirp(filepath.Join(parent, "child", "file"))
 	if err == nil {
 		t.Skip("destination directory was created despite read-only parent")
 	}

@@ -3,7 +3,7 @@ package grab
 import (
 	"context"
 	"log"
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,8 +31,7 @@ func TestRateLimiter(t *testing.T) {
 	// download a 128 byte file, 8 bytes at a time, with a naive 512bps limiter
 	// should take > 250ms
 	filesize := 128
-	filename := ".testRateLimiter"
-	defer os.Remove(filename)
+	filename := filepath.Join(t.TempDir(), "testRateLimiter")
 
 	grabtest.WithTestServer(t, func(url string) {
 		// limit to 512bps
