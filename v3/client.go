@@ -89,7 +89,7 @@ func (c *Client) Do(req *Request) *Response {
 	resp := &Response{
 		Request:    req,
 		Start:      time.Now(),
-		Done:       make(chan struct{}, 0),
+		Done:       make(chan struct{}),
 		Filename:   req.Filename,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -475,9 +475,9 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		resp.writer = f
 
 		// seek to start or end
-		whence := os.SEEK_SET
+		whence := io.SeekStart
 		if resp.bytesResumed > 0 {
-			whence = os.SEEK_END
+			whence = io.SeekEnd
 		}
 		_, resp.err = f.Seek(0, whence)
 		if resp.err != nil {

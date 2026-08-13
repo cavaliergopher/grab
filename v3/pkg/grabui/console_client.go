@@ -155,7 +155,7 @@ func byteString(n int64) string {
 }
 
 func etaString(eta time.Time) string {
-	d := eta.Sub(time.Now())
+	d := time.Until(eta)
 	if d < time.Second {
 		return "<1s"
 	}

@@ -380,24 +380,21 @@ func TestBatch(t *testing.T) {
 			responses := DefaultClient.DoBatch(workerCount, reqs...)
 
 			// listen for responses
-		Loop:
 			for i := 0; i < len(reqs); {
-				select {
-				case resp := <-responses:
-					if resp == nil {
-						break Loop
-					}
-					testComplete(t, resp)
-					if err := resp.Err(); err != nil {
-						t.Errorf("%s: %v", resp.Filename, err)
-					}
-
-					// remove test file
-					if resp.IsComplete() {
-						os.Remove(resp.Filename) // ignore errors
-					}
-					i++
+				resp := <-responses
+				if resp == nil {
+					break
 				}
+				testComplete(t, resp)
+				if err := resp.Err(); err != nil {
+					t.Errorf("%s: %v", resp.Filename, err)
+				}
+
+				// remove test file
+				if resp.IsComplete() {
+					os.Remove(resp.Filename) // ignore errors
+				}
+				i++
 			}
 		}
 	},
@@ -426,8 +423,6 @@ func TestCancelContext(t *testing.T) {
 		time.Sleep(time.Millisecond * 500)
 		cancel()
 		for resp := range respch {
-			defer os.Remove(resp.Filename)
-
 			// err should be context.Canceled or http.errRequestCanceled
 			if resp.Err() == nil || !strings.Contains(resp.Err().Error(), "canceled") {
 				t.Errorf("expected '%v', got '%v'", context.Canceled, resp.Err())
@@ -435,6 +430,9 @@ func TestCancelContext(t *testing.T) {
 			if resp.BytesComplete() >= int64(fileSize) {
 				t.Errorf("expected Response.BytesComplete: < %d, got: %d", fileSize, resp.BytesComplete())
 			}
+
+			// remove test file; the transfer is done once Err has returned
+			os.Remove(resp.Filename) // ignore errors
 		}
 	},
 		grabtest.ContentLength(fileSize),

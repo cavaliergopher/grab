@@ -168,7 +168,7 @@ func (c *Response) Duration() time.Duration {
 		return c.End.Sub(c.Start)
 	}
 
-	return time.Now().Sub(c.Start)
+	return time.Since(c.Start)
 }
 
 // ETA returns the estimated time at which the the download will complete, given
