@@ -153,5 +153,11 @@ jobs:
       - name: govulncheck
         working-directory: v3
         run: |
+          # govulncheck reports vulnerabilities in the standard library of the
+          # toolchain it scans with, and setup-go's "stable" alias trails a Go
+          # security release by days. Scan with the newest release so the job
+          # reports on our code, not on the runner's Go build. This edits go.mod
+          # in the checkout only; the toolchain line is never committed.
+          go get toolchain@latest
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
