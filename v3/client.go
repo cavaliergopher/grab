@@ -531,7 +531,9 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	if resp.err != nil {
 		return c.closeResponse
 	}
-	closeWriter(resp)
+	if resp.err = closeWriter(resp); resp.err != nil {
+		return c.closeResponse
+	}
 
 	// set file timestamp
 	if !resp.Request.NoStore && !resp.Request.IgnoreRemoteTime {
@@ -562,11 +564,18 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 	return c.checksumFile
 }
 
-func closeWriter(resp *Response) {
+// closeWriter closes the destination and returns any error from doing so.
+//
+// A file system is allowed to defer a write error until the file is closed,
+// and some - NFS in particular - routinely do. Discarding that error reports a
+// download as successful when none of it may have reached the disk.
+func closeWriter(resp *Response) error {
+	var err error
 	if closer, ok := resp.writer.(io.Closer); ok {
-		closer.Close()
+		err = closer.Close()
 	}
 	resp.writer = nil
+	return err
 }
 
 // close finalizes the Response
@@ -576,7 +585,9 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 	}
 
 	resp.fi = nil
-	closeWriter(resp)
+	// Any close error here belongs to a transfer that already failed, and
+	// would only mask the error that caused it.
+	_ = closeWriter(resp)
 	resp.closeResponseBody()
 
 	resp.End = time.Now()
