@@ -88,20 +88,31 @@ DSORP : Filename: "foo.bar"
 DSORP : Size: > 0
 DSORP : CanResume: true
 DSORP : File: partial
-DSORP --> Transferring
+DSORP --> Planning
 
 DSORZ : Filename: "foo.bar"
 DSORZ : Size: > 0
 DSORZ : CanResume: true
 DSORZ : File: empty
-DSORZ --> Transferring
+DSORZ --> Planning
 
 DSOZ : Filename: "foo.bar"
 DSOZ : Size: > 0
 DSOZ : CanResume: false
 DSOZ : File: empty
-DSOZ --> Transferring
+DSOZ --> Planning
 
+Planning : Decide which byte ranges remain to be downloaded
+Planning : RangeSize == 0, or Range unsupported, or Size <= RangeSize:
+Planning :   one range covering the rest of the file
+Planning : Otherwise: RangeSize sized ranges, minus those a
+Planning :   matching checkpoint records as already complete
+Planning --> [*] : Checkpoint accounts for every range
+Planning --> Transferring
+
+Transferring : Concurrency ranges in flight, dispatched from the
+Transferring :   start of the file. A split transfer checkpoints
+Transferring :   each range as it completes
 Transferring --> [*]
 Transferring --> ERROR
 

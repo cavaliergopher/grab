@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -1051,35 +1052,35 @@ func assertFileContent(t *testing.T, filename string, expect []byte) {
 	}
 }
 
-// errWriteCloser accepts all writes but fails to close, in the same way that a
-// file system may defer a write error until the file is closed.
-type errWriteCloser struct {
+// errTransferWriter accepts all writes but fails to close, in the same way
+// that a file system may defer a write error until the file is closed.
+type errTransferWriter struct {
 	err error
 }
 
-func (w *errWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (w *errTransferWriter) WriteAt(p []byte, off int64) (int, error) { return len(p), nil }
 
-func (w *errWriteCloser) Close() error { return w.err }
+func (w *errTransferWriter) Truncate(size int64) error { return nil }
+
+func (w *errTransferWriter) Sync() error { return nil }
+
+func (w *errTransferWriter) Close() error { return w.err }
 
 // TestCopyFileReportsCloseError asserts that an error returned when closing the
 // destination file is reported via Response.Err, rather than reporting a
 // download as successful when it may never have reached the disk.
 func TestCopyFileReportsCloseError(t *testing.T) {
 	expect := errors.New("deferred write error")
-	w := &errWriteCloser{err: expect}
+	w := &errTransferWriter{err: expect}
+	body := "hello world"
 	resp := &Response{
 		// NoStore keeps copyFile away from the file system, so that a
 		// regression fails this assertion rather than panicking later.
 		Request: &Request{NoStore: true},
 		writer:  w,
-		transfer: newTransfer(
-			context.Background(),
-			nil,
-			w,
-			strings.NewReader("hello world"),
-			nil,
-		),
+		ranges:  []byteRange{{Start: 0, End: int64(len(body))}},
 	}
+	resp.transfer = newTransfer(resp, nil, io.NopCloser(strings.NewReader(body)), nil)
 
 	if next := (&Client{}).copyFile(resp); next == nil {
 		t.Fatal("expected transfer to be finalized, got nil state")
@@ -1092,14 +1093,12 @@ func TestCopyFileReportsCloseError(t *testing.T) {
 	}
 }
 
-// TestCloseWriterIgnoresNonClosers asserts that a destination which cannot be
-// closed - as when Request.NoStore writes to a memory buffer - is not an error.
-func TestCloseWriterIgnoresNonClosers(t *testing.T) {
-	resp := &Response{writer: &bytes.Buffer{}}
+// TestCloseWriterIgnoresNilWriter asserts that finalizing a transfer which
+// never opened a destination is not an error. closeResponse closes the writer
+// again after copyFile has already released it.
+func TestCloseWriterIgnoresNilWriter(t *testing.T) {
+	resp := &Response{}
 	if err := closeWriter(resp); err != nil {
 		t.Errorf("expected no error, got: %v", err)
-	}
-	if resp.writer != nil {
-		t.Error("expected Response.writer to be released")
 	}
 }

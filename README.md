@@ -126,8 +126,46 @@ file again with resuming enabled, the local file will likely become corrupted.
 In this case, you might consider making remote files immutable, or disabling
 resume.
 
+There is one deliberate exception. Setting `Request.RangeSize` splits a download
+into ranges that are fetched separately, and `Request.Concurrency` fetches
+several of them at once. Because those ranges are written at their offset in the
+file rather than in order, the length of a partial file no longer says which of
+its bytes are valid, and a transfer interrupted part way through could not
+otherwise be resumed. Such a transfer therefore records what it has written in a
+`.grab` file beside the destination, and removes it once the download finishes.
+Downloads that are not split write no such file.
+
+That record is updated about once a second and includes the part of a range that
+has been written but not yet finished, so an interruption costs roughly a second
+of transfer regardless of how large the ranges are. Ranges can therefore be
+sized for throughput without trading away progress.
+
+That record also carries the `ETag` and `Last-Modified` of the remote file it
+read those ranges from, and is discarded unless they still match. A split
+download resumed against a file that has changed in the meantime starts over
+rather than assembling a local copy out of two different remote files - which is
+a stronger guarantee than an unsplit resume can make, as that has no choice but
+to assume the remote file is unchanged.
+
 Grab aims to enable best-in-class functionality for more complex features
 through extensible interfaces, rather than reimplementation. For example,
 you can provide your own Hash algorithm to compute file checksums, or your
 own rate limiter implementation (with all the associated trade-offs) to rate
 limit downloads.
+
+## Development
+
+Notes for working on grab itself are in [docs/](docs/):
+
+* [Architecture](docs/architecture.md) — the transfer state machine, and the
+  invariants that must not be broken
+* [Range requests and throughput](docs/range-requests.md) — how to reason about
+  `RangeSize` and `Concurrency`, with the measurements behind the rules of thumb
+* [Testing and benchmarking](docs/testing.md) — the test server, and what the
+  benchmarks are for
+
+```bash
+make check           # what CI runs
+make bench           # what grab costs; watch for regressions
+make bench-network   # what RangeSize and Concurrency are worth
+```

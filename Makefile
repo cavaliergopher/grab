@@ -34,10 +34,30 @@ test:
 	cd v3 && $(GO) test -v -cover -race -count=1 -shuffle=on ./...
 	cd v3/cmd/grab && $(MAKE) -B all
 
+# bench runs the benchmarks that measure what grab itself costs. These are the
+# ones to watch for regressions. To compare a change against main:
+#
+#	go install golang.org/x/perf/cmd/benchstat@latest
+#	git stash && make bench > /tmp/old.txt && git stash pop
+#	make bench > /tmp/new.txt
+#	benchstat /tmp/old.txt /tmp/new.txt
+bench:
+	cd v3 && $(GO) test -run '^$$' -benchmem \
+		-bench 'BenchmarkTransfer|BenchmarkRangeSet|BenchmarkCheckpointStore' ./...
+
+# bench-network runs the benchmarks that show what Request.RangeSize and
+# Request.Concurrency are worth, against a server behind a simulated round trip
+# and per connection bandwidth limit. They are meant to be read rather than
+# tracked: being dominated by simulated latency, they say little about a change
+# to grab. See docs/range-requests.md.
+bench-network:
+	cd v3 && $(GO) test -run '^$$' -benchtime 5x \
+		-bench 'BenchmarkRangeSize|BenchmarkConcurrency' ./...
+
 install:
 	cd v3/cmd/grab && $(MAKE) install
 
 clean:
 	cd v3 && $(GO) clean -x ./...
 
-.PHONY: all check fmt fmt-check vet tidy test install clean
+.PHONY: all check fmt fmt-check vet tidy test bench bench-network install clean
