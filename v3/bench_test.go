@@ -325,9 +325,9 @@ func byteLabel(n int64) string {
 // progress in the checkpoint.
 //
 // range=off is the unsplit transfer, and is the baseline the rest should be
-// compared against. durable=true adds the flush and the checkpoint write that
-// recording progress costs; the gap between the two is the price of Durable on
-// whatever device b.TempDir() lives on.
+// compared against. durable=true adds the flush that Request.Durable promises,
+// and for a split transfer the checkpoint write as well; the gap between the
+// two is the price of Durable on whatever device b.TempDir() lives on.
 func BenchmarkTransfer(b *testing.B) {
 	const size = 8 << 20
 	s := newBenchServer(b, size, netProfile{})
@@ -338,9 +338,6 @@ func BenchmarkTransfer(b *testing.B) {
 				continue // concurrency does nothing without ranges
 			}
 			for _, durable := range []bool{false, true} {
-				if rangeSize == 0 && durable {
-					continue // an unsplit transfer records nothing
-				}
 				name := fmt.Sprintf("range=%s/conc=%d/durable=%v",
 					rangeLabel(rangeSize), conc, durable)
 				b.Run(name, func(b *testing.B) {

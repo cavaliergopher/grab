@@ -7,7 +7,7 @@
 | `client.go` | The state machine that drives a transfer from request to closed response |
 | `request.go` | `Request` — everything the caller configures |
 | `response.go` | `Response` — everything the caller observes, plus the in-memory `NoStore` destination |
-| `transfer.go` | Moving bytes: the worker pool, the per-range copy loop, and the checkpointer |
+| `transfer.go` | Moving bytes: the worker pool, the per-range copy loop, the checkpointer and the flusher |
 | `checkpoint.go` | The interval set and the on-disk checkpoint format |
 | `util.go` | HTTP header helpers: `Range`, `Content-Range`, `Last-Modified`, filename guessing |
 | `pkg/grabtest` | The test server: byte ranges, validators, failure injection, assertions |
@@ -98,7 +98,9 @@ the same path as everything else rather than being a special case.
 Every split transfer writes `<filename>.grab`. It is removed when the transfer
 completes, and deliberately left behind when it fails.
 
-It serves two purposes, and only the second is optional. Its *presence* marks
+It serves two purposes, and only the second is optional. (Flushing is a third
+thing again: `Durable` flushes every transfer, split or not, and a transfer
+that is not split uses a `flusher` rather than a `checkpointer` to do it.) Its *presence* marks
 the destination as written out of order, which is what stops a later transfer
 resuming from a length that means nothing. Its *contents* record what has been
 written, so an interrupted transfer can resume — and that is what `Durable`

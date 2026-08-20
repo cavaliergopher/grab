@@ -91,6 +91,18 @@ transfer never flushes, and an interruption costs everything it had written.
 The checkpoint is removed on completion and left in place on failure. Format
 and ordering rules are in [architecture.md](architecture.md#the-checkpoint).
 
+`Durable` is not only about splitting. A transfer that is not split has no
+progress to record — it writes its file in order, so its length is its
+progress — but it is still flushed on the same interval, so `Response.Err`
+waits for the data and can report a failure to write it.
+
+A checksum, if one is set, is computed by re-reading the destination after the
+transfer rather than from the bytes as they passed through. Under `Durable`
+those bytes have already been flushed, so a write that failed is caught before
+the checksum rather than after it. The read itself may still be served from the
+page cache, so a matching checksum tells you the right bytes were written, not
+that the medium was read back.
+
 ## Testing
 
 For the test suite and the benchmarks, see [testing.md](testing.md). This

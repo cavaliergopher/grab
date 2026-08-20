@@ -145,6 +145,12 @@ for it: everything transferred so far is flushed before each record is written,
 so a durable download runs no faster than the destination accepts it. Without
 `Durable` the file claims nothing and an interrupted download starts over.
 
+`Request.Durable` is not only about splitting. It flushes any download as it
+proceeds, so one that reports success has reached the disk rather than been
+handed to the operating system to write out later. That costs throughput - the
+download runs no faster than the device accepts data - and it is what allows a
+failure to write to be reported at all.
+
 That record also carries the `ETag` and `Last-Modified` of the remote file it
 read those ranges from, and is discarded unless they still match. A split
 download resumed against a file that has changed in the meantime starts over
