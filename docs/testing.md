@@ -122,6 +122,11 @@ range or per write that should be done per transfer — that is exactly how the
 redundant final checkpoint was found, which was costing split transfers four
 fifths of their throughput.
 
+The `durable=true` and `durable=false` pairs isolate what recording progress
+costs, since only a durable transfer flushes. Compare them on the same
+machine: the gap is a property of whatever device `b.TempDir()` lives on, so
+it is worth watching for change but not worth comparing across hosts.
+
 ### `make bench-network` — what tuning is worth
 
 `BenchmarkRangeSize` and `BenchmarkConcurrency`, against a server that sleeps a

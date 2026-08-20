@@ -60,6 +60,8 @@ func main() {
 		"download each file in ranges of this size, e.g. 8MiB (default: one request)")
 	concurrency := flag.Int("concurrency", 1,
 		"maximum ranges to download at the same time; needs -range-size")
+	durable := flag.Bool("durable", false,
+		"record progress so an interrupted download resumes; needs -range-size")
 	batch := flag.Int("batch", 0,
 		"maximum files to download at the same time (default: all of them)")
 	http1 := flag.Bool("http1", false,
@@ -102,6 +104,7 @@ func main() {
 		}
 		req.RangeSize = int64(rangeSize)
 		req.Concurrency = *concurrency
+		req.Durable = *durable
 		reqs[i] = req
 	}
 

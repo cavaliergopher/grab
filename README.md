@@ -130,15 +130,20 @@ There is one deliberate exception. Setting `Request.RangeSize` splits a download
 into ranges that are fetched separately, and `Request.Concurrency` fetches
 several of them at once. Because those ranges are written at their offset in the
 file rather than in order, the length of a partial file no longer says which of
-its bytes are valid, and a transfer interrupted part way through could not
-otherwise be resumed. Such a transfer therefore records what it has written in a
-`.grab` file beside the destination, and removes it once the download finishes.
-Downloads that are not split write no such file.
+its bytes are valid. Such a transfer therefore writes a `.grab` file beside the
+destination and removes it once the download finishes. Its presence is what
+marks the file as written out of order, so that a later download neither resumes
+from its length nor mistakes a file that reached full length with holes in it
+for a finished one. Downloads that are not split write no such file.
 
-That record is updated about once a second and includes the part of a range that
-has been written but not yet finished, so an interruption costs roughly a second
-of transfer regardless of how large the ranges are. Ranges can therefore be
-sized for throughput without trading away progress.
+Setting `Request.Durable` fills that file in. The transfer then records what it
+has written about once a second, including the part of a range that has been
+written but not yet finished, so an interruption costs roughly a second of
+transfer regardless of how large the ranges are. Ranges can therefore be sized
+for throughput without trading away progress. Recording progress means waiting
+for it: everything transferred so far is flushed before each record is written,
+so a durable download runs no faster than the destination accepts it. Without
+`Durable` the file claims nothing and an interrupted download starts over.
 
 That record also carries the `ETag` and `Last-Modified` of the remote file it
 read those ranges from, and is discarded unless they still match. A split

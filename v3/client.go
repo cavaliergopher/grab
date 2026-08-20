@@ -352,7 +352,10 @@ func (c *Client) planSplitTransfer(resp *Response) stateFunc {
 	url := resp.Request.URL().String()
 	size, rangeSize := resp.Size(), resp.Request.RangeSize
 
-	if resp.Request.NoResume {
+	if resp.Request.NoResume || !resp.Request.Durable {
+		// A transfer that records no progress has nothing to resume from, and
+		// must not leave the record of an earlier transfer beside a file it is
+		// about to overwrite.
 		if resp.err = removeCheckpoint(checkpointFilename(resp.Filename)); resp.err != nil {
 			return c.closeResponse
 		}
@@ -593,7 +596,7 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 	}
 	var ckpt *checkpointer
 	if resp.checkpoint != nil && file != nil {
-		ckpt = newCheckpointer(resp.checkpoint, file, resp.complete)
+		ckpt = newCheckpointer(resp.checkpoint, file, resp.complete, resp.Request.Durable)
 	}
 	resp.transfer = newTransfer(resp, c, resp.HTTPResponse.Body, ckpt)
 

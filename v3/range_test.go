@@ -372,6 +372,7 @@ func TestRangeTransferResume(t *testing.T) {
 
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 1
 		resp := client.Do(req)
 		if err := resp.Err(); !errors.Is(err, failure) {
@@ -396,6 +397,7 @@ func TestRangeTransferResume(t *testing.T) {
 		rec.Reset()
 		req = mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 4
 		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
 		resp = mustDo(req)
@@ -501,6 +503,7 @@ func TestRangeTransferCheckpointsPartialRanges(t *testing.T) {
 
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 1 // so the ranges are attempted in order
 		req.BufferSize = bufSize
 		resp := client.Do(req)
@@ -523,6 +526,7 @@ func TestRangeTransferCheckpointsPartialRanges(t *testing.T) {
 		rec.Reset()
 		req = mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 1
 		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
 		resp = mustDo(req)
@@ -570,6 +574,7 @@ func TestRangeTransferResumeDiscardsStaleCheckpoint(t *testing.T) {
 
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 1
 		if err := client.Do(req).Err(); !errors.Is(err, failure) {
 			t.Fatalf("expected the transfer to fail with %v, got: %v", failure, err)
@@ -582,6 +587,7 @@ func TestRangeTransferResumeDiscardsStaleCheckpoint(t *testing.T) {
 		rec.Reset()
 		req = mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 4
 		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
 		resp := mustDo(req)
@@ -621,6 +627,7 @@ func TestRangeTransferNoResume(t *testing.T) {
 
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 1
 		if err := client.Do(req).Err(); !errors.Is(err, failure) {
 			t.Fatalf("expected the transfer to fail with %v, got: %v", failure, err)
@@ -629,6 +636,7 @@ func TestRangeTransferNoResume(t *testing.T) {
 		rec.Reset()
 		req = mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 4
 		req.NoResume = true
 		resp := mustDo(req)
@@ -669,6 +677,7 @@ func TestRangeTransferHoleInFullLengthFile(t *testing.T) {
 
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 4
 		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
 		resp := mustDo(req)
@@ -705,6 +714,7 @@ func TestRangeTransferAlreadyComplete(t *testing.T) {
 	grabtest.WithTestServer(t, func(url string) {
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 4
 		mustDo(req)
 
@@ -712,6 +722,7 @@ func TestRangeTransferAlreadyComplete(t *testing.T) {
 		rec.Reset()
 		req = mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
+		req.Durable = true
 		req.Concurrency = 4
 		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
 		resp := mustDo(req)
@@ -798,6 +809,61 @@ func TestUnsplitTransferDiscardsHoledFile(t *testing.T) {
 		testComplete(t, resp)
 	},
 		grabtest.ContentLength(size),
+	)
+
+	assertFileContents(t, filename, size)
+	assertNoCheckpoint(t, filename)
+}
+
+// TestRangeTransferWithoutDurable tests that a split transfer which is not
+// durable records no progress, but still marks the destination file as written
+// out of order, so that what it leaves behind is never mistaken for a file
+// that can be resumed.
+func TestRangeTransferWithoutDurable(t *testing.T) {
+	const (
+		size      = 32768
+		rangeSize = 8192
+	)
+	filename := filepath.Join(t.TempDir(), "testRangeNotDurable")
+	failure := errors.New("TEST: range failed")
+
+	rec := &grabtest.RangeRecorder{}
+	grabtest.WithTestServer(t, func(url string) {
+		client := NewClient()
+		client.HTTPClient = &rangeFailClient{
+			client: DefaultClient.HTTPClient,
+			after:  2,
+			err:    failure,
+		}
+
+		req := mustNewRequest(filename, url)
+		req.RangeSize = rangeSize
+		req.Concurrency = 1
+		if err := client.Do(req).Err(); !errors.Is(err, failure) {
+			t.Fatalf("expected the transfer to fail with %v, got: %v", failure, err)
+		}
+
+		// the checkpoint accompanies the file, but claims nothing of it
+		if c := readCheckpoint(t, filename); len(c.Complete) != 0 {
+			t.Errorf("expected the checkpoint to record no progress, got: %v", c.Complete)
+		}
+
+		// so the transfer starts over rather than resuming what was written
+		rec.Reset()
+		req = mustNewRequest(filename, url)
+		req.RangeSize = rangeSize
+		req.Concurrency = 4
+		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
+		resp := mustDo(req)
+
+		if resp.DidResume {
+			t.Error("expected Response.DidResume to be false")
+		}
+		grabtest.AssertRangesCover(t, rec, size)
+		testComplete(t, resp)
+	},
+		grabtest.ContentLength(size),
+		grabtest.RecordRanges(rec),
 	)
 
 	assertFileContents(t, filename, size)

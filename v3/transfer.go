@@ -308,6 +308,12 @@ type checkpointer struct {
 	ckpt *checkpoint
 	dst  *os.File
 
+	// durable reports whether progress is recorded as the transfer makes it.
+	// When it is not, the checkpoint is written once and left alone: it marks
+	// the destination file as written out of order without ever claiming that
+	// any part of it is complete.
+	durable bool
+
 	mu       sync.Mutex
 	complete rangeSet
 	dirty    bool
@@ -316,11 +322,15 @@ type checkpointer struct {
 	done chan struct{}
 }
 
-func newCheckpointer(ckpt *checkpoint, dst *os.File, complete *rangeSet) *checkpointer {
+func newCheckpointer(ckpt *checkpoint, dst *os.File, complete *rangeSet, durable bool) *checkpointer {
 	p := &checkpointer{
-		ckpt: ckpt,
-		dst:  dst,
-		done: make(chan struct{}),
+		ckpt:    ckpt,
+		dst:     dst,
+		durable: durable,
+		// The first store must write even though nothing has completed yet, so
+		// that the checkpoint marks the file from the moment writing starts.
+		dirty: true,
+		done:  make(chan struct{}),
 	}
 	if complete != nil {
 		p.complete = *complete
@@ -335,7 +345,7 @@ func newCheckpointer(ckpt *checkpoint, dst *os.File, complete *rangeSet) *checkp
 // Writes within a range are sequential, so the range a worker reports is always
 // a prefix of the range it was given.
 func (p *checkpointer) add(r byteRange) {
-	if r.End <= r.Start {
+	if !p.durable || r.End <= r.Start {
 		return
 	}
 	p.mu.Lock()
@@ -351,12 +361,22 @@ func (p *checkpointer) add(r byteRange) {
 // before it stops. A transfer that is being abandoned wants that, so that as
 // little as possible is lost. A transfer that finished does not: its checkpoint
 // is about to be deleted, and writing one first only pays to flush the file
-// twice.
+// twice. A transfer that is not durable has recorded nothing to flush.
 func (p *checkpointer) start() (stop func(flush bool) error) {
 	quit := make(chan struct{})
 	var final atomic.Bool
+	// Write the checkpoint before any of the file is, so that there is no
+	// window in which the destination has been written out of order but
+	// nothing beside it says so.
+	p.store()
 	go func() {
 		defer close(p.done)
+		if !p.durable {
+			// No progress is recorded, so there is never anything more to
+			// write than the marker already written above.
+			<-quit
+			return
+		}
 		t := time.NewTicker(checkpointInterval)
 		defer t.Stop()
 		for {
