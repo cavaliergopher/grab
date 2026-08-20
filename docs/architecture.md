@@ -32,10 +32,11 @@ statFileInfo ──> validateLocal ──> planTransfer ──> getRequest ─�
 
 - **`statFileInfo`** looks for an existing destination file.
 - **`validateLocal`** decides whether it is already complete, too large, or
-  worth resuming. When the transfer could be split and a checkpoint exists, it
-  defers to `planTransfer` — the length of a partial file means nothing for a
-  split transfer, since a transfer whose last range finished leaves a file of
-  the full length with a hole in it.
+  worth resuming. When a checkpoint exists it defers to `planTransfer` — the
+  length of a partial file means nothing once a split transfer has written it,
+  since one whose last range finished leaves a file of the full length with a
+  hole in it. That holds however the transfer that finds the file is
+  configured; it was the transfer that wrote it which chose the order.
 - **`headRequest`** is normally an optimisation and is skipped when it would
   tell us nothing. A transfer that may be split always sends it, because it
   cannot plan ranges without the size of the file and the server's
@@ -66,6 +67,9 @@ which reproduces exactly what grab did before ranges existed:
 | Split, fresh | `RangeSize` sized ranges from 0 | `bytes=0-…` per range |
 | Split, resuming | the ranges the checkpoint does not cover | per range |
 
+Only a `Durable` transfer resumes. Without it the checkpoint records nothing,
+so a split transfer that finds one plans every range afresh.
+
 The open-ended `∞` is deliberate: asking for everything from an offset rather
 than up to the size the server last reported means a file that has grown is
 caught by the length check rather than silently truncated.
@@ -91,9 +95,15 @@ the same path as everything else rather than being a special case.
 
 ## The checkpoint
 
-A split transfer records what it has written in `<filename>.grab`, so an
-interrupted one can resume. It is removed when the transfer completes, and
-deliberately left behind when it fails.
+Every split transfer writes `<filename>.grab`. It is removed when the transfer
+completes, and deliberately left behind when it fails.
+
+It serves two purposes, and only the second is optional. Its *presence* marks
+the destination as written out of order, which is what stops a later transfer
+resuming from a length that means nothing. Its *contents* record what has been
+written, so an interrupted transfer can resume — and that is what `Durable`
+turns on. Without it the file is written once, claims nothing, and is never
+updated again.
 
 ```json
 {
@@ -112,10 +122,11 @@ and the validators all still match; otherwise it is deleted and the transfer
 starts over. This makes a resumed split transfer *safer* than a resumed unsplit
 one, which has no choice but to assume the remote file is unchanged.
 
-Workers report what they have written as they go, not only when a range
-finishes, and the checkpointer writes once per `checkpointInterval` (one
-second). That decouples how much an interruption costs from `RangeSize`, which
-is chosen for throughput — see [range-requests.md](range-requests.md).
+When `Durable` is set, workers report what they have written as they go, not
+only when a range finishes, and the checkpointer writes once per
+`checkpointInterval` (one second). That decouples how much an interruption
+costs from `RangeSize`, which is chosen for throughput — see
+[range-requests.md](range-requests.md).
 
 ### Ordering
 

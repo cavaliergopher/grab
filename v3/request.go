@@ -117,18 +117,21 @@ type Request struct {
 	// so ranges below a megabyte start to cost real throughput, and ranges of
 	// 64 KiB are slower than not splitting the transfer at all.
 	//
-	// Sizing ranges for throughput does not cost progress. When a transfer is
-	// split into more than one range, what it has written is recorded in a
-	// checkpoint file alongside the destination file, so that an interrupted
-	// transfer resumes without downloading it again. That record includes the
-	// part of a range that was written before the interruption, so what is
-	// lost is bounded by the interval between checkpoints - about a second of
-	// transfer - rather than by RangeSize or Concurrency. The checkpoint is
-	// removed once the transfer completes. See Request.Filename.
+	// Sizing ranges for throughput need not cost progress. Set Request.Durable
+	// and what a split transfer has written is recorded in a checkpoint file
+	// alongside the destination file, so that an interrupted transfer resumes
+	// without downloading it again. That record includes the part of a range
+	// that was written before the interruption, so what is lost is bounded by
+	// the interval between checkpoints - about a second of transfer - rather
+	// than by RangeSize or Concurrency. See Request.Filename.
 	//
-	// A split transfer writes to the destination file out of order, so an
-	// existing file that has no valid checkpoint beside it cannot be resumed
-	// and is downloaded again in full.
+	// A split transfer writes to the destination file out of order, so the
+	// length of a partial file says nothing about which of its bytes are
+	// valid. The checkpoint file is what marks a file as written out of order,
+	// and accompanies every split transfer whether or not Durable is set, so
+	// that an interrupted transfer is never mistaken for a resumable or
+	// complete one. Without Durable it simply records no progress. Either way
+	// it is removed once the transfer completes.
 	RangeSize int64
 
 	// Concurrency specifies the maximum number of ranges that may be
@@ -150,6 +153,24 @@ type Request struct {
 	// Note that Request.BufferSize is allocated for each range in flight,
 	// rather than once for the transfer.
 	Concurrency int
+
+	// Durable specifies that the progress of a split transfer is recorded, so
+	// that an interrupted transfer resumes rather than downloading the file
+	// again. Default: false.
+	//
+	// Recording progress means waiting for it. Everything transferred so far
+	// is flushed to stable storage before each record is written, about once a
+	// second, so a durable transfer proceeds no faster than the destination
+	// device accepts it. Without Durable, a transfer is finished once the last
+	// byte has been accepted by the operating system, which writes it out
+	// afterwards - so the file takes just as long to become durable, but
+	// Response.Err does not wait for it and cannot report a failure to write
+	// it.
+	//
+	// Durable has no effect unless RangeSize splits the transfer into more
+	// than one range. A transfer that is not split writes its file in order,
+	// and resumes from the length of a partial one.
+	Durable bool
 
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash

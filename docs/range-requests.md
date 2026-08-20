@@ -72,14 +72,21 @@ HTTP/1.1 does. A client cannot tell the two apart, so grab does not cap
 
 ## Durability
 
-A split transfer records its progress in a checkpoint file beside the
-destination. Workers report what they have written as they go, not only when a
-range finishes; once per second the destination is flushed and the record
-rewritten.
+Every split transfer writes a checkpoint file beside the destination. Its
+presence marks the file as written out of order: ranges land at their offset,
+so a partial file's length says nothing about which of its bytes are valid, and
+one can reach full length with holes in it. A later transfer that finds the
+checkpoint starts over rather than resuming from that length.
 
-An interruption therefore costs about a second of transfer, whatever
-`RangeSize` and `Concurrency` are set to. Smaller ranges do not make it
-cheaper, and cost throughput — see the table above.
+`Durable` decides whether the checkpoint also records progress. With it,
+workers report what they have written as they go, not only when a range
+finishes; once per second the destination is flushed and the record rewritten.
+An interruption then costs about a second of transfer, whatever `RangeSize` and
+`Concurrency` are set to. Smaller ranges do not make it cheaper, and cost
+throughput — see the table above.
+
+Without it the checkpoint is written once and left alone, claiming nothing. The
+transfer never flushes, and an interruption costs everything it had written.
 
 The checkpoint is removed on completion and left in place on failure. Format
 and ordering rules are in [architecture.md](architecture.md#the-checkpoint).
@@ -150,6 +157,11 @@ There is a point past which concurrency is all downside and a little bit rude.
 
 ### Durability costs disk bandwidth
 
+These runs predate `Durable`, which did not exist when they were measured;
+every split transfer flushed. Read the split rows as durable ones, and the
+unsplit rows as any transfer that does not flush — which is now also a split
+transfer with `Durable` unset.
+
 Against the fast mirror every split configuration landed within 0.1% of the
 same rate — 131.07, 130.94 and 131.01 MB/s across two protocols and two
 concurrency levels — while an unsplit download of the same file ran at
@@ -162,10 +174,10 @@ network involved:
 | 16 MiB ranges, 4 workers | 132–201 MB/s | 2504–2543 MB/s |
 | 1 MiB ranges, 16 workers | 134 MB/s | 2434–2501 MB/s |
 
-The difference is the flush. A split transfer flushes the destination once per
-`checkpointInterval` so the record cannot claim data the file system has not
-committed — see [architecture.md](architecture.md#ordering). An unsplit
-transfer writes no checkpoint and never flushes.
+The difference is the flush. A durable transfer flushes the destination once
+per `checkpointInterval` so the record cannot claim data the file system has
+not committed — see [architecture.md](architecture.md#ordering). Every other
+transfer never flushes.
 
 The two columns measure different work. 163 and 418 MB/s are one configuration
 measured twice, and 418 MB/s is four times what the volume can absorb: the
@@ -192,10 +204,10 @@ would only double the bytes in each.
 
 What separates the two columns is what the transfer waits for, not how much
 disk work it causes. Both write the same bytes to the same device at the same
-rate. An unsplit transfer returns once the last byte reaches the page cache and
-lets the kernel write it out afterwards; a checkpointed one waits. Leaving
-`RangeSize` unset therefore does not make the file durable any sooner — it
-stops `Response.Err` from waiting for it, and gives up knowing when the data
+rate. A transfer that does not flush returns once the last byte reaches the
+page cache and lets the kernel write it out afterwards; a durable one waits.
+Leaving `Durable` unset therefore does not make the file durable any sooner —
+it stops `Response.Err` from waiting for it, and gives up knowing when the data
 is safe.
 
 The illusion also has a limit. It holds only while the file fits in memory;
@@ -207,8 +219,8 @@ grab sustained 2.5 GB/s to tmpfs while issuing 3,151 range requests.
 
 Two cautions if you repeat these measurements. Mirror throughput drifts — the
 same mirror served between 25 and 43 MB/s on one connection within a single
-session — so run the configurations you mean to compare back to back. And check
-that a distributor's published checksum describes the file it currently serves:
+session — so run the configurations you mean to compare back to back. And
+check that a distributor's published checksum describes the file it serves:
 Rocky Linux's `CHECKSUM` claims 1,480,048,640 bytes for an ISO it serves at
 2,755,067,904.
 
@@ -220,6 +232,10 @@ Rocky Linux's `CHECKSUM` claims 1,480,048,640 bytes for an ISO it serves at
 - **`RangeSize`**: at least ten times the bandwidth-delay product of one
   connection. A megabyte is a reasonable starting point for most internet
   paths; raise it on fast, high-latency links.
+- **`Durable`**: set it when losing the transfer would matter more than
+  finishing it quickly. A durable transfer runs at the rate the destination
+  accepts data rather than the rate the network delivers it — the difference
+  between the two columns above.
 - **`Concurrency`**: as high as the server tolerates if the limit is per
   connection, 2–4 if you are talking to an HTTP/2 origin that meters per
   connection. Remember `Request.BufferSize` is allocated per range in flight,
@@ -232,6 +248,12 @@ Decisions that are easy to want to revisit:
 
 - **`RangeSize` splits unconditionally.** It is a size, not a hint. A transfer
   either splits into ranges of that size or, if it cannot, is a single range.
+- **The checkpoint is written even without `Durable`.** It costs one write at
+  the start of the transfer, and it is the only thing marking the destination
+  as written out of order. Without it nothing distinguishes a file abandoned
+  mid-split from a resumable or a finished one, and a later download resumes
+  from its length onto holes. What `Durable` buys is the progress recorded in
+  it, and the flush that has to precede each update.
 - **The default is one range, not one range per worker.** Fixed-size ranges
   fill the file front to back at a predictable rate, and let the number of
   requests scale with the file rather than with a worker count that has nothing

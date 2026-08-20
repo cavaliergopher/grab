@@ -221,8 +221,15 @@ func (s *benchServer) client() *Client {
 	return c
 }
 
+// benchConfig is the part of a Request that the transfer benchmarks vary.
+type benchConfig struct {
+	rangeSize int64
+	conc      int
+	durable   bool
+}
+
 // download fetches the whole file into dir and returns how long it took.
-func (s *benchServer) download(dir string, c *Client, rangeSize int64, conc int) (time.Duration, error) {
+func (s *benchServer) download(dir string, c *Client, cfg benchConfig) (time.Duration, error) {
 	dst := filepath.Join(dir, "payload.bin")
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
 		return 0, err
@@ -234,8 +241,9 @@ func (s *benchServer) download(dir string, c *Client, rangeSize int64, conc int)
 	if err != nil {
 		return 0, err
 	}
-	req.RangeSize = rangeSize
-	req.Concurrency = conc
+	req.RangeSize = cfg.rangeSize
+	req.Concurrency = cfg.conc
+	req.Durable = cfg.durable
 	start := time.Now()
 	if err := c.Do(req).Err(); err != nil {
 		return 0, err
@@ -246,9 +254,9 @@ func (s *benchServer) download(dir string, c *Client, rangeSize int64, conc int)
 // verify downloads the file once and checks it arrived intact. Every benchmark
 // runs it before starting the clock, so that a harness which is fast because
 // it is broken cannot be mistaken for a fast transfer.
-func (s *benchServer) verify(tb testing.TB, dir string, c *Client, rangeSize int64, conc int) {
+func (s *benchServer) verify(tb testing.TB, dir string, c *Client, cfg benchConfig) {
 	tb.Helper()
-	if _, err := s.download(dir, c, rangeSize, conc); err != nil {
+	if _, err := s.download(dir, c, cfg); err != nil {
 		tb.Fatal(err)
 	}
 	f, err := os.Open(filepath.Join(dir, "payload.bin"))
@@ -266,7 +274,7 @@ func (s *benchServer) verify(tb testing.TB, dir string, c *Client, rangeSize int
 }
 
 // benchDownload is the body shared by every transfer benchmark.
-func benchDownload(b *testing.B, s *benchServer, rangeSize int64, conc int) {
+func benchDownload(b *testing.B, s *benchServer, cfg benchConfig) {
 	dir := b.TempDir()
 	c := s.client()
 
@@ -275,7 +283,7 @@ func benchDownload(b *testing.B, s *benchServer, rangeSize int64, conc int) {
 	// connections the transfer used, not how many it opened in any one
 	// iteration.
 	atomic.StoreInt64(&s.conns, 0)
-	s.verify(b, dir, c, rangeSize, conc)
+	s.verify(b, dir, c, cfg)
 	atomic.StoreInt64(&s.requests, 0)
 
 	b.SetBytes(int64(len(s.body)))
@@ -283,7 +291,7 @@ func benchDownload(b *testing.B, s *benchServer, rangeSize int64, conc int) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		if _, err := s.download(dir, c, rangeSize, conc); err != nil {
+		if _, err := s.download(dir, c, cfg); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -317,7 +325,9 @@ func byteLabel(n int64) string {
 // progress in the checkpoint.
 //
 // range=off is the unsplit transfer, and is the baseline the rest should be
-// compared against.
+// compared against. durable=true adds the flush and the checkpoint write that
+// recording progress costs; the gap between the two is the price of Durable on
+// whatever device b.TempDir() lives on.
 func BenchmarkTransfer(b *testing.B) {
 	const size = 8 << 20
 	s := newBenchServer(b, size, netProfile{})
@@ -327,9 +337,16 @@ func BenchmarkTransfer(b *testing.B) {
 			if rangeSize == 0 && conc != 1 {
 				continue // concurrency does nothing without ranges
 			}
-			b.Run(fmt.Sprintf("range=%s/conc=%d", rangeLabel(rangeSize), conc), func(b *testing.B) {
-				benchDownload(b, s, rangeSize, conc)
-			})
+			for _, durable := range []bool{false, true} {
+				if rangeSize == 0 && durable {
+					continue // an unsplit transfer records nothing
+				}
+				name := fmt.Sprintf("range=%s/conc=%d/durable=%v",
+					rangeLabel(rangeSize), conc, durable)
+				b.Run(name, func(b *testing.B) {
+					benchDownload(b, s, benchConfig{rangeSize, conc, durable})
+				})
+			}
 		}
 	}
 }
@@ -353,7 +370,7 @@ func BenchmarkRangeSize(b *testing.B) {
 
 	for _, rangeSize := range []int64{0, 2 << 20, 1 << 20, 256 << 10, 64 << 10, 32 << 10} {
 		b.Run(fmt.Sprintf("range=%s", rangeLabel(rangeSize)), func(b *testing.B) {
-			benchDownload(b, s, rangeSize, 4)
+			benchDownload(b, s, benchConfig{rangeSize: rangeSize, conc: 4})
 		})
 	}
 }
@@ -385,7 +402,7 @@ func BenchmarkConcurrency(b *testing.B) {
 		})
 		for _, conc := range []int{1, 2, 4, 8} {
 			b.Run(fmt.Sprintf("proto=%s/conc=%d", proto.name, conc), func(b *testing.B) {
-				benchDownload(b, s, 512<<10, conc)
+				benchDownload(b, s, benchConfig{rangeSize: 512 << 10, conc: conc})
 			})
 		}
 	}
