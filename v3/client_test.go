@@ -1081,11 +1081,12 @@ func TestCopyFileReportsCloseError(t *testing.T) {
 		),
 	}
 
-	if next := (&Client{}).copyFile(resp); next == nil {
-		t.Fatal("expected transfer to be finalized, got nil state")
+	next, err := (&Client{}).copyFile(resp)
+	if next != nil {
+		t.Error("expected a failed transfer to name no successor state")
 	}
-	if !errors.Is(resp.err, expect) {
-		t.Errorf("expected error: %v, got: %v", expect, resp.err)
+	if !errors.Is(err, expect) {
+		t.Errorf("expected error: %v, got: %v", expect, err)
 	}
 	if resp.writer != nil {
 		t.Error("expected Response.writer to be released after close")

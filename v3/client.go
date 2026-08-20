@@ -173,14 +173,18 @@ func (c *Client) DoBatch(workers int, requests ...*Request) <-chan *Response {
 	return respch
 }
 
-// An stateFunc is an action that mutates the state of a Response and returns
+// A stateFunc is an action that mutates the state of a Response and returns
 // the next stateFunc to be called.
-type stateFunc func(*Response) stateFunc
+//
+// Returning an error ends the transfer: run records the error on the Response
+// and transitions to closeResponse. A state that fails therefore never names
+// its successor, and cannot report a failure without ending the transfer.
+type stateFunc func(*Response) (stateFunc, error)
 
 // run calls the given stateFunc function and all subsequent returned stateFuncs
-// until a stateFunc returns nil or the Response.ctx is canceled. Each stateFunc
-// should mutate the state of the given Response until it has completed
-// downloading or failed.
+// until a stateFunc returns nil or an error, or the Response.ctx is canceled.
+// Each stateFunc should mutate the state of the given Response until it has
+// completed downloading or failed.
 func (c *Client) run(resp *Response, f stateFunc) {
 	for {
 		select {
@@ -194,9 +198,15 @@ func (c *Client) run(resp *Response, f stateFunc) {
 		default:
 			// keep working
 		}
-		if f = f(resp); f == nil {
+		next, err := f(resp)
+		if err != nil {
+			resp.err = err
+			next = c.closeResponse
+		}
+		if next == nil {
 			return
 		}
+		f = next
 	}
 }
 
@@ -208,26 +218,23 @@ func (c *Client) run(resp *Response, f stateFunc) {
 //
 // If the file exists, Response.fi is set and the next stateFunc is
 // validateLocal.
-//
-// If an error occurs, the next stateFunc is closeResponse.
-func (c *Client) statFileInfo(resp *Response) stateFunc {
+func (c *Client) statFileInfo(resp *Response) (stateFunc, error) {
 	if resp.Request.NoStore || resp.Filename == "" {
-		return c.headRequest
+		return c.headRequest, nil
 	}
 	fi, err := os.Stat(resp.Filename)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return c.headRequest
+			return c.headRequest, nil
 		}
-		resp.err = err
-		return c.closeResponse
+		return nil, err
 	}
 	if fi.IsDir() {
 		resp.Filename = ""
-		return c.headRequest
+		return c.headRequest, nil
 	}
 	resp.fi = fi
-	return c.validateLocal
+	return c.validateLocal, nil
 }
 
 // validateLocal compares a local copy of the downloaded file to the remote
@@ -241,10 +248,9 @@ func (c *Client) statFileInfo(resp *Response) stateFunc {
 //
 // If the local file is smaller than the remote file and the remote server is
 // known to support ranged requests, the next stateFunc is getRequest.
-func (c *Client) validateLocal(resp *Response) stateFunc {
+func (c *Client) validateLocal(resp *Response) (stateFunc, error) {
 	if resp.Request.SkipExisting {
-		resp.err = ErrFileExists
-		return c.closeResponse
+		return nil, ErrFileExists
 	}
 
 	// determine target file size
@@ -257,25 +263,24 @@ func (c *Client) validateLocal(resp *Response) stateFunc {
 		// size is either actually 0 or unknown
 		// if unknown, we ask the remote server
 		// if known to be 0, we proceed with a GET
-		return c.headRequest
+		return c.headRequest, nil
 	}
 
 	if expectedSize == resp.fi.Size() {
 		// local file matches remote file size - wrap it up
 		resp.DidResume = true
 		resp.bytesResumed = resp.fi.Size()
-		return c.checksumFile
+		return c.checksumFile, nil
 	}
 
 	if resp.Request.NoResume {
 		// local file should be overwritten
-		return c.getRequest
+		return c.getRequest, nil
 	}
 
 	if expectedSize >= 0 && expectedSize < resp.fi.Size() {
 		// remote size is known, is smaller than local size and we want to resume
-		resp.err = ErrBadLength
-		return c.closeResponse
+		return nil, ErrBadLength
 	}
 
 	if resp.CanResume {
@@ -285,14 +290,14 @@ func (c *Client) validateLocal(resp *Response) stateFunc {
 			fmt.Sprintf("bytes=%d-", resp.fi.Size()))
 		resp.DidResume = true
 		resp.bytesResumed = resp.fi.Size()
-		return c.getRequest
+		return c.getRequest, nil
 	}
-	return c.headRequest
+	return c.headRequest, nil
 }
 
-func (c *Client) checksumFile(resp *Response) stateFunc {
+func (c *Client) checksumFile(resp *Response) (stateFunc, error) {
 	if resp.Request.hash == nil {
-		return c.closeResponse
+		return c.closeResponse, nil
 	}
 	if resp.Filename == "" {
 		panic("grab: developer error: filename not set")
@@ -303,25 +308,25 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	req := resp.Request
 
 	// compute checksum
-	var sum []byte
-	sum, resp.err = resp.checksumUnsafe()
-	if resp.err != nil {
-		return c.closeResponse
+	sum, err := resp.checksumUnsafe()
+	if err != nil {
+		return nil, err
 	}
 
 	// compare checksum
 	if !bytes.Equal(sum, req.checksum) {
-		resp.err = ErrBadChecksum
+		err = ErrBadChecksum
 		if !resp.Request.NoStore && req.deleteOnError {
-			if err := os.Remove(resp.Filename); err != nil {
-				// err should be os.PathError and include file path
-				resp.err = fmt.Errorf(
+			if rerr := os.Remove(resp.Filename); rerr != nil {
+				// rerr should be os.PathError and include file path
+				err = fmt.Errorf(
 					"cannot remove downloaded file with checksum mismatch: %w",
-					err)
+					rerr)
 			}
 		}
+		return nil, err
 	}
-	return c.closeResponse
+	return c.closeResponse, nil
 }
 
 // doHTTPRequest sends a HTTP Request and returns the response
@@ -332,27 +337,27 @@ func (c *Client) doHTTPRequest(req *http.Request) (*http.Response, error) {
 	return c.HTTPClient.Do(req)
 }
 
-func (c *Client) headRequest(resp *Response) stateFunc {
+func (c *Client) headRequest(resp *Response) (stateFunc, error) {
 	if resp.optionsKnown {
-		return c.getRequest
+		return c.getRequest, nil
 	}
 	resp.optionsKnown = true
 
 	if resp.Request.NoResume {
-		return c.getRequest
+		return c.getRequest, nil
 	}
 
 	if resp.Filename != "" && resp.fi == nil {
 		// destination path is already known and does not exist
-		return c.getRequest
+		return c.getRequest, nil
 	}
 
 	hreq := new(http.Request)
 	*hreq = *resp.Request.HTTPRequest
 	hreq.Method = "HEAD"
 
-	resp.HTTPResponse, resp.err = c.doHTTPRequest(hreq)
-	if resp.err != nil {
+	hresp, err := c.doHTTPRequest(hreq)
+	if err != nil {
 		// Some servers mishandle HEAD and close the connection or otherwise
 		// fail, even though they serve GET for the same resource correctly.
 		// The HEAD request is only an optimisation - it tells us the size and
@@ -361,16 +366,15 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 		//
 		// A cancelled context is not a server fault and must not be retried.
 		if resp.ctx.Err() != nil {
-			return c.closeResponse
+			return nil, err
 		}
-		resp.err = nil
-		resp.HTTPResponse = nil
-		return c.getRequest
+		return c.getRequest, nil
 	}
+	resp.HTTPResponse = hresp
 	resp.HTTPResponse.Body.Close()
 
 	if resp.HTTPResponse.StatusCode != http.StatusOK {
-		return c.getRequest
+		return c.getRequest, nil
 	}
 
 	// In case of redirects during HEAD, record the final URL and use it
@@ -381,29 +385,29 @@ func (c *Client) headRequest(resp *Response) stateFunc {
 	resp.Request.HTTPRequest.URL = resp.HTTPResponse.Request.URL
 	resp.Request.HTTPRequest.Host = resp.HTTPResponse.Request.Host
 
-	return c.readResponse
+	return c.readResponse, nil
 }
 
-func (c *Client) getRequest(resp *Response) stateFunc {
-	resp.HTTPResponse, resp.err = c.doHTTPRequest(resp.Request.HTTPRequest)
-	if resp.err != nil {
-		return c.closeResponse
+func (c *Client) getRequest(resp *Response) (stateFunc, error) {
+	hresp, err := c.doHTTPRequest(resp.Request.HTTPRequest)
+	if err != nil {
+		return nil, err
 	}
+	resp.HTTPResponse = hresp
 
 	// TODO: check Content-Range
 
 	// check status code
 	if !resp.Request.IgnoreBadStatusCodes {
 		if resp.HTTPResponse.StatusCode < 200 || resp.HTTPResponse.StatusCode > 299 {
-			resp.err = StatusCodeError(resp.HTTPResponse.StatusCode)
-			return c.closeResponse
+			return nil, StatusCodeError(resp.HTTPResponse.StatusCode)
 		}
 	}
 
-	return c.readResponse
+	return c.readResponse, nil
 }
 
-func (c *Client) readResponse(resp *Response) stateFunc {
+func (c *Client) readResponse(resp *Response) (stateFunc, error) {
 	if resp.HTTPResponse == nil {
 		panic("grab: developer error: Response.HTTPResponse is nil")
 	}
@@ -414,8 +418,7 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 		// remote size is known
 		resp.sizeUnsafe += resp.bytesResumed
 		if resp.Request.Size > 0 && resp.Request.Size != resp.sizeUnsafe {
-			resp.err = ErrBadLength
-			return c.closeResponse
+			return nil, ErrBadLength
 		}
 	}
 
@@ -423,8 +426,7 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 	if resp.Filename == "" {
 		filename, err := guessFilename(resp.HTTPResponse)
 		if err != nil {
-			resp.err = err
-			return c.closeResponse
+			return nil, err
 		}
 		// Request.Filename will be empty or a directory
 		resp.Filename = filepath.Join(resp.Request.Filename, filename)
@@ -434,20 +436,19 @@ func (c *Client) readResponse(resp *Response) stateFunc {
 		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
 			resp.CanResume = true
 		}
-		return c.statFileInfo
+		return c.statFileInfo, nil
 	}
-	return c.openWriter
+	return c.openWriter, nil
 }
 
 // openWriter opens the destination file for writing and seeks to the location
 // from whence the file transfer will resume.
 //
 // Requires that Response.Filename and resp.DidResume are already be set.
-func (c *Client) openWriter(resp *Response) stateFunc {
+func (c *Client) openWriter(resp *Response) (stateFunc, error) {
 	if !resp.Request.NoStore && !resp.Request.NoCreateDirectories {
-		resp.err = mkdirp(resp.Filename)
-		if resp.err != nil {
-			return c.closeResponse
+		if err := mkdirp(resp.Filename); err != nil {
+			return nil, err
 		}
 	}
 
@@ -469,8 +470,7 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		// open file
 		f, err := os.OpenFile(resp.Filename, flag, 0666)
 		if err != nil {
-			resp.err = err
-			return c.closeResponse
+			return nil, err
 		}
 		resp.writer = f
 
@@ -479,9 +479,8 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		if resp.bytesResumed > 0 {
 			whence = io.SeekEnd
 		}
-		_, resp.err = f.Seek(0, whence)
-		if resp.err != nil {
-			return c.closeResponse
+		if _, err := f.Seek(0, whence); err != nil {
+			return nil, err
 		}
 	}
 
@@ -498,24 +497,22 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		b)
 
 	// next step is copyFile, but this will be called later in another goroutine
-	return nil
+	return nil, nil
 }
 
 // copy transfers content for a HTTP connection established via Client.do()
-func (c *Client) copyFile(resp *Response) stateFunc {
+func (c *Client) copyFile(resp *Response) (stateFunc, error) {
 	if resp.IsComplete() {
-		return nil
+		return nil, nil
 	}
 
 	// run BeforeCopy hook
 	if f := resp.Request.BeforeCopy; f != nil {
-		resp.err = f(resp)
-		if resp.err != nil {
-			return c.closeResponse
+		if err := f(resp); err != nil {
+			return nil, err
 		}
 	}
 
-	var bytesCopied int64
 	if resp.transfer == nil {
 		panic("grab: developer error: Response.transfer is nil")
 	}
@@ -527,19 +524,18 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 		t.Truncate(0)
 	}
 
-	bytesCopied, resp.err = resp.transfer.copy()
-	if resp.err != nil {
-		return c.closeResponse
+	bytesCopied, err := resp.transfer.copy()
+	if err != nil {
+		return nil, err
 	}
-	if resp.err = closeWriter(resp); resp.err != nil {
-		return c.closeResponse
+	if err := closeWriter(resp); err != nil {
+		return nil, err
 	}
 
 	// set file timestamp
 	if !resp.Request.NoStore && !resp.Request.IgnoreRemoteTime {
-		resp.err = setLastModified(resp.HTTPResponse, resp.Filename)
-		if resp.err != nil {
-			return c.closeResponse
+		if err := setLastModified(resp.HTTPResponse, resp.Filename); err != nil {
+			return nil, err
 		}
 	}
 
@@ -548,20 +544,18 @@ func (c *Client) copyFile(resp *Response) stateFunc {
 		discoveredSize := resp.bytesResumed + bytesCopied
 		atomic.StoreInt64(&resp.sizeUnsafe, discoveredSize)
 		if resp.Request.Size > 0 && resp.Request.Size != discoveredSize {
-			resp.err = ErrBadLength
-			return c.closeResponse
+			return nil, ErrBadLength
 		}
 	}
 
 	// run AfterCopy hook
 	if f := resp.Request.AfterCopy; f != nil {
-		resp.err = f(resp)
-		if resp.err != nil {
-			return c.closeResponse
+		if err := f(resp); err != nil {
+			return nil, err
 		}
 	}
 
-	return c.checksumFile
+	return c.checksumFile, nil
 }
 
 // closeWriter closes the destination and returns any error from doing so.
@@ -579,7 +573,7 @@ func closeWriter(resp *Response) error {
 }
 
 // close finalizes the Response
-func (c *Client) closeResponse(resp *Response) stateFunc {
+func (c *Client) closeResponse(resp *Response) (stateFunc, error) {
 	if resp.IsComplete() {
 		panic("grab: developer error: response already closed")
 	}
@@ -596,5 +590,5 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 		resp.cancel()
 	}
 
-	return nil
+	return nil, nil
 }
