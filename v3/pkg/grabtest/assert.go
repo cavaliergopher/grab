@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"testing"
 )
 
@@ -83,6 +84,38 @@ func MustHTTPDoWithClose(req *http.Request) *http.Response {
 		panic(err)
 	}
 	return resp
+}
+
+// AssertRangesCover asserts that the ranges recorded by a test server tile the
+// interval [0, size) exactly once: no gaps, no overlaps and nothing beyond the
+// end of the file.
+func AssertRangesCover(t *testing.T, rec *RangeRecorder, size int64) (ok bool) {
+	t.Helper()
+	ranges := rec.Ranges()
+	sorted := append([][2]int64(nil), ranges...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i][0] < sorted[j][0] })
+
+	ok = true
+	next := int64(0)
+	for _, r := range sorted {
+		switch {
+		case r[0] < next:
+			t.Errorf("range %d-%d overlaps the previous range, in: %v", r[0], r[1], ranges)
+			ok = false
+		case r[0] > next:
+			t.Errorf("bytes %d-%d were never requested, in: %v", next, r[0], ranges)
+			ok = false
+		case r[1] > size:
+			t.Errorf("range %d-%d extends past the end of the file at %d", r[0], r[1], size)
+			ok = false
+		}
+		next = r[1]
+	}
+	if next != size {
+		t.Errorf("expected ranges to cover %d bytes, got: %d, in: %v", size, next, ranges)
+		ok = false
+	}
+	return
 }
 
 func AssertSHA256Sum(t *testing.T, sum []byte, r io.Reader) (ok bool) {

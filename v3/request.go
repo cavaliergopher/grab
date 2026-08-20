@@ -99,6 +99,58 @@ type Request struct {
 	// the Response object.
 	AfterCopy Hook
 
+	// RangeSize specifies the size in bytes of each Range request used to
+	// download the file. If RangeSize is zero, or the remote server does not
+	// support Range requests, the file is downloaded as a single range with a
+	// single request.
+	//
+	// Size ranges for throughput. Each one costs a round trip to the server
+	// before its first byte arrives, so a transfer reaches roughly
+	//
+	//	1 / (1 + BDP/RangeSize)
+	//
+	// of the throughput it would reach with arbitrarily large ranges, where
+	// BDP is the bandwidth-delay product of a single connection. Ten times the
+	// bandwidth-delay product therefore costs around a tenth of the
+	// throughput, and matching it costs half. A connection carrying 4 MiB/s
+	// over a 50ms round trip has a bandwidth-delay product of about 200 KiB,
+	// so ranges below a megabyte start to cost real throughput, and ranges of
+	// 64 KiB are slower than not splitting the transfer at all.
+	//
+	// Sizing ranges for throughput does not cost progress. When a transfer is
+	// split into more than one range, what it has written is recorded in a
+	// checkpoint file alongside the destination file, so that an interrupted
+	// transfer resumes without downloading it again. That record includes the
+	// part of a range that was written before the interruption, so what is
+	// lost is bounded by the interval between checkpoints - about a second of
+	// transfer - rather than by RangeSize or Concurrency. The checkpoint is
+	// removed once the transfer completes. See Request.Filename.
+	//
+	// A split transfer writes to the destination file out of order, so an
+	// existing file that has no valid checkpoint beside it cannot be resumed
+	// and is downloaded again in full.
+	RangeSize int64
+
+	// Concurrency specifies the maximum number of ranges that may be
+	// downloaded at the same time. Concurrency has no effect unless RangeSize
+	// is set, as a transfer that is not split is a single range. Default: 1.
+	//
+	// What concurrency is worth depends on where the bottleneck is. Over
+	// HTTP/1.1 each range in flight has its own connection, so against a
+	// server or a path that limits each connection rather than each client,
+	// throughput scales with Concurrency.
+	//
+	// Over HTTP/2 the ranges are multiplexed onto a single connection and
+	// share its congestion window, so concurrency does not multiply bandwidth.
+	// It is still worth setting above one, as one range waiting on its round
+	// trip overlaps another transferring, but there is little to gain beyond
+	// two. Servers that meter each stream rather than each connection are the
+	// exception, and behave as HTTP/1.1 does.
+	//
+	// Note that Request.BufferSize is allocated for each range in flight,
+	// rather than once for the transfer.
+	Concurrency int
+
 	// hash, checksum and deleteOnError - set via SetChecksum.
 	hash          hash.Hash
 	checksum      []byte

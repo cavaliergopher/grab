@@ -2,14 +2,75 @@ package grab
 
 import (
 	"fmt"
+	"math"
 	"mime"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// setRangeHeader sets the Range header of a request to the given byte range of
+// a file of the given total size, which may be negative if it is not known.
+//
+// A range that covers the whole file is requested without a Range header at
+// all, so that an unsplit transfer of a complete file remains the plain request
+// grab has always made.
+//
+// The last byte position in a Range header is inclusive, so it is one less than
+// the end of the half-open interval a byteRange describes.
+func setRangeHeader(req *http.Request, r byteRange, size int64) {
+	switch {
+	case r.Start == 0 && (size < 0 || r.End >= size):
+		req.Header.Del("Range")
+	case r.End == math.MaxInt64:
+		// the end of the file is as far as the range goes, but where that is
+		// is not yet known
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", r.Start))
+	default:
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", r.Start, r.End-1))
+	}
+}
+
+// parseContentRange parses a Content-Range header of the form
+// "bytes first-last/complete" and returns the range as the half-open interval
+// [start, end), along with the complete size of the remote file.
+//
+// It returns ok as false if the header is missing, malformed, or does not
+// specify the complete length of the file - as a server may respond with "*"
+// when it does not know it.
+func parseContentRange(s string) (start, end, size int64, ok bool) {
+	spec, found := strings.CutPrefix(s, "bytes ")
+	if !found {
+		return 0, 0, 0, false
+	}
+	rng, complete, found := strings.Cut(spec, "/")
+	if !found {
+		return 0, 0, 0, false
+	}
+	first, last, found := strings.Cut(rng, "-")
+	if !found {
+		return 0, 0, 0, false
+	}
+	var err error
+	if start, err = strconv.ParseInt(first, 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if end, err = strconv.ParseInt(last, 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if size, err = strconv.ParseInt(complete, 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	// the last byte position is inclusive
+	if end++; start < 0 || end <= start || end > size {
+		return 0, 0, 0, false
+	}
+	return start, end, size, true
+}
 
 // setLastModified sets the last modified timestamp of a local file according to
 // the Last-Modified header returned by a remote server.
