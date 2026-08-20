@@ -599,6 +599,11 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		ckpt = newCheckpointer(resp.checkpoint, file, resp.complete, resp.Request.Durable)
 	}
 	resp.transfer = newTransfer(resp, c, resp.HTTPResponse.Body, ckpt)
+	if resp.Request.Durable && ckpt == nil && file != nil {
+		// A transfer that is not split has no checkpointer to flush the file
+		// for it, but Durable promises the same of both.
+		resp.transfer.flush = newFlusher(file)
+	}
 
 	// next step is copyFile, but this will be called later in another goroutine
 	return nil

@@ -154,22 +154,26 @@ type Request struct {
 	// rather than once for the transfer.
 	Concurrency int
 
-	// Durable specifies that the progress of a split transfer is recorded, so
-	// that an interrupted transfer resumes rather than downloading the file
-	// again. Default: false.
+	// Durable specifies that the destination is flushed to stable storage as
+	// the transfer proceeds, so that Response.Err does not report success
+	// until what was downloaded is on the disk. Default: false.
 	//
-	// Recording progress means waiting for it. Everything transferred so far
-	// is flushed to stable storage before each record is written, about once a
-	// second, so a durable transfer proceeds no faster than the destination
-	// device accepts it. Without Durable, a transfer is finished once the last
-	// byte has been accepted by the operating system, which writes it out
-	// afterwards - so the file takes just as long to become durable, but
-	// Response.Err does not wait for it and cannot report a failure to write
-	// it.
+	// Without Durable a transfer is finished once the last byte has been
+	// accepted by the operating system, which writes it out afterwards. The
+	// file takes just as long to become durable either way. What changes is
+	// whether the transfer waits for it, and so whether a failure to write it
+	// is reported at all.
 	//
-	// Durable has no effect unless RangeSize splits the transfer into more
-	// than one range. A transfer that is not split writes its file in order,
-	// and resumes from the length of a partial one.
+	// Waiting costs throughput: a durable transfer proceeds no faster than the
+	// destination device accepts data, rather than as fast as the network
+	// delivers it. It flushes about once a second rather than once at the end,
+	// so that the rate it reports stays honest, instead of running at the
+	// speed of memory and then stalling at 100% complete while the device
+	// catches up.
+	//
+	// Where RangeSize splits the transfer into more than one range, Durable
+	// also records which of them are complete, so that an interrupted transfer
+	// resumes rather than starting over. See RangeSize.
 	Durable bool
 
 	// hash, checksum and deleteOnError - set via SetChecksum.

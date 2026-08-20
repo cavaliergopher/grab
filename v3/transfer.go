@@ -63,6 +63,11 @@ type transfer struct {
 	// ckpt records completed ranges so that an interrupted transfer can be
 	// resumed. It is nil if the transfer is not split across several ranges.
 	ckpt *checkpointer
+
+	// flush keeps the destination file on stable storage for a transfer that
+	// is durable but not split, and so has no checkpointer to flush it. It is
+	// nil for every other transfer.
+	flush *flusher
 }
 
 func newTransfer(resp *Response, client *Client, first io.ReadCloser, ckpt *checkpointer) *transfer {
@@ -107,9 +112,18 @@ func (c *transfer) copy() (written int64, err error) {
 		defer func() {
 			// Record what was written if the transfer is being abandoned: that
 			// is exactly what a later transfer can skip. A transfer that
-			// finished needs no checkpoint, since the caller deletes it next.
+			// finished needs no checkpoint, since the caller deletes it next -
+			// though its bytes must still reach the disk before this returns.
 			if cerr := stop(err != nil); err == nil {
 				err = cerr
+			}
+		}()
+	}
+	if c.flush != nil {
+		stop := c.flush.start()
+		defer func() {
+			if ferr := stop(); err == nil {
+				err = ferr
 			}
 		}()
 	}
@@ -357,12 +371,14 @@ func (p *checkpointer) add(r byteRange) {
 // start runs the checkpointer until the returned function is called, which
 // stops it and returns the first error it met, if any.
 //
-// Pass flush to have the progress made since the last checkpoint recorded
+// Pass record to have the progress made since the last checkpoint written
 // before it stops. A transfer that is being abandoned wants that, so that as
 // little as possible is lost. A transfer that finished does not: its checkpoint
 // is about to be deleted, and writing one first only pays to flush the file
-// twice. A transfer that is not durable has recorded nothing to flush.
-func (p *checkpointer) start() (stop func(flush bool) error) {
+// twice. Either way a durable transfer flushes the destination one last time,
+// as that is the promise Request.Durable makes, and a transfer that is not
+// durable made no promise and flushes nothing.
+func (p *checkpointer) start() (stop func(record bool) error) {
 	quit := make(chan struct{})
 	var final atomic.Bool
 	// Write the checkpoint before any of the file is, so that there is no
@@ -386,13 +402,15 @@ func (p *checkpointer) start() (stop func(flush bool) error) {
 			case <-quit:
 				if final.Load() {
 					p.store()
+				} else {
+					p.sync()
 				}
 				return
 			}
 		}
 	}()
-	return func(flush bool) error {
-		final.Store(flush)
+	return func(record bool) error {
+		final.Store(record)
 		close(quit)
 		<-p.done
 		p.mu.Lock()
@@ -417,6 +435,95 @@ func (p *checkpointer) store() {
 	p.mu.Unlock()
 
 	if err := p.ckpt.store(p.dst, complete); err != nil {
+		p.mu.Lock()
+		p.err = err
+		p.mu.Unlock()
+	}
+}
+
+// sync flushes the destination without writing a checkpoint, for a transfer
+// that finished and whose checkpoint is about to be deleted. The record is of
+// no further use, but the bytes it would have described still have to reach
+// the disk before the caller is told the transfer succeeded.
+func (p *checkpointer) sync() {
+	p.mu.Lock()
+	failed := p.err != nil
+	p.mu.Unlock()
+	if failed {
+		return
+	}
+	if err := p.dst.Sync(); err != nil {
+		p.mu.Lock()
+		p.err = err
+		p.mu.Unlock()
+	}
+}
+
+// A flusher keeps the destination file of a durable transfer on stable storage
+// as the transfer runs, for transfers that are not split and so have no
+// checkpointer to do it for them. There is nothing to record - a transfer that
+// is not split writes its file in order, so its length is its progress - only
+// the flush itself, and the error it can report.
+//
+// Flushing throughout rather than once at the end is what keeps a durable
+// transfer's reported rate honest. A single flush on completion would let the
+// transfer run at the speed of memory and then stall, at 100% complete, for as
+// long as the device needed to catch up.
+type flusher struct {
+	dst syncer
+
+	mu   sync.Mutex
+	err  error
+	done chan struct{}
+}
+
+// A syncer flushes what has been written to it to stable storage. It is the
+// part of transferWriter a flusher needs, and *os.File is what implements it.
+type syncer interface {
+	Sync() error
+}
+
+func newFlusher(dst syncer) *flusher {
+	return &flusher{dst: dst, done: make(chan struct{})}
+}
+
+// start flushes the destination until the returned function is called, which
+// flushes it once more and returns the first error met, if any.
+func (p *flusher) start() (stop func() error) {
+	quit := make(chan struct{})
+	go func() {
+		defer close(p.done)
+		t := time.NewTicker(checkpointInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				p.sync()
+			case <-quit:
+				// However the transfer ended, what it wrote belongs on the
+				// disk before anyone is told about it.
+				p.sync()
+				return
+			}
+		}
+	}()
+	return func() error {
+		close(quit)
+		<-p.done
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.err
+	}
+}
+
+func (p *flusher) sync() {
+	p.mu.Lock()
+	failed := p.err != nil
+	p.mu.Unlock()
+	if failed {
+		return
+	}
+	if err := p.dst.Sync(); err != nil {
 		p.mu.Lock()
 		p.err = err
 		p.mu.Unlock()

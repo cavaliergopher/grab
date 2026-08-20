@@ -1055,23 +1055,24 @@ func assertFileContent(t *testing.T, filename string, expect []byte) {
 // errTransferWriter accepts all writes but fails to close, in the same way
 // that a file system may defer a write error until the file is closed.
 type errTransferWriter struct {
-	err error
+	closeErr error
+	syncErr  error
 }
 
 func (w *errTransferWriter) WriteAt(p []byte, off int64) (int, error) { return len(p), nil }
 
 func (w *errTransferWriter) Truncate(size int64) error { return nil }
 
-func (w *errTransferWriter) Sync() error { return nil }
+func (w *errTransferWriter) Sync() error { return w.syncErr }
 
-func (w *errTransferWriter) Close() error { return w.err }
+func (w *errTransferWriter) Close() error { return w.closeErr }
 
 // TestCopyFileReportsCloseError asserts that an error returned when closing the
 // destination file is reported via Response.Err, rather than reporting a
 // download as successful when it may never have reached the disk.
 func TestCopyFileReportsCloseError(t *testing.T) {
 	expect := errors.New("deferred write error")
-	w := &errTransferWriter{err: expect}
+	w := &errTransferWriter{closeErr: expect}
 	body := "hello world"
 	resp := &Response{
 		// NoStore keeps copyFile away from the file system, so that a

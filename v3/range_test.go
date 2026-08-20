@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -860,6 +861,58 @@ func TestRangeTransferWithoutDurable(t *testing.T) {
 			t.Error("expected Response.DidResume to be false")
 		}
 		grabtest.AssertRangesCover(t, rec, size)
+		testComplete(t, resp)
+	},
+		grabtest.ContentLength(size),
+		grabtest.RecordRanges(rec),
+	)
+
+	assertFileContents(t, filename, size)
+	assertNoCheckpoint(t, filename)
+}
+
+// TestDurableTransferReportsSyncError tests that a durable transfer fails if
+// the destination cannot be flushed, rather than reporting a success whose
+// bytes may never have reached the disk.
+func TestDurableTransferReportsSyncError(t *testing.T) {
+	expect := errors.New("TEST: sync failed")
+	w := &errTransferWriter{syncErr: expect}
+	body := "hello world"
+	resp := &Response{
+		Request: &Request{NoStore: true, Durable: true},
+		writer:  w,
+		ranges:  []byteRange{{Start: 0, End: int64(len(body))}},
+	}
+	resp.transfer = newTransfer(resp, nil, io.NopCloser(strings.NewReader(body)), nil)
+	resp.transfer.flush = newFlusher(w)
+
+	if _, err := resp.transfer.copy(); !errors.Is(err, expect) {
+		t.Errorf("expected error: %v, got: %v", expect, err)
+	}
+}
+
+// TestDurableUnsplitTransfer tests that Request.Durable applies to a transfer
+// that is not split, which has no checkpoint to record and so nothing to do
+// but flush.
+func TestDurableUnsplitTransfer(t *testing.T) {
+	const size = 32768
+	filename := filepath.Join(t.TempDir(), "testDurableUnsplit")
+
+	rec := &grabtest.RangeRecorder{}
+	grabtest.WithTestServer(t, func(url string) {
+		req := mustNewRequest(filename, url)
+		req.Durable = true
+		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
+		resp := mustDo(req)
+
+		// one request for the whole file, as without Durable
+		if got := rec.Ranges(); len(got) != 1 {
+			t.Errorf("expected a single request, got: %v", got)
+		}
+		// but flushed as it went, which is all Durable means here
+		if resp.transfer.flush == nil {
+			t.Error("expected the transfer to flush the destination")
+		}
 		testComplete(t, resp)
 	},
 		grabtest.ContentLength(size),
