@@ -665,31 +665,7 @@ func TestRangeTransferHoleInFullLengthFile(t *testing.T) {
 
 	rec := &grabtest.RangeRecorder{}
 	grabtest.WithTestServer(t, func(url string) {
-		// Build the state an interrupted transfer leaves behind: a file of the
-		// full length whose every range but one was written, and a checkpoint
-		// that records exactly those ranges.
-		body := make([]byte, size)
-		for i := range body {
-			body[i] = byte(i)
-		}
-		for i := holeStart; i < holeEnd; i++ {
-			body[i] = 0xff // never written, and not what the server would send
-		}
-		if err := os.WriteFile(filename, body, 0666); err != nil {
-			t.Fatal(err)
-		}
-
-		head := grabtest.MustHTTPDoWithClose(grabtest.MustHTTPNewRequest("HEAD", url, nil))
-		complete := newRangeSet([2]int64{0, holeStart}, [2]int64{holeEnd, size})
-		c := newCheckpoint(filename, url, size, rangeSize, head.Header)
-		f, err := os.OpenFile(filename, os.O_WRONLY, 0666)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := c.store(f, complete); err != nil {
-			t.Fatal(err)
-		}
-		f.Close()
+		writeHoledFile(t, filename, url, size, rangeSize, holeStart, holeEnd)
 
 		req := mustNewRequest(filename, url)
 		req.RangeSize = rangeSize
@@ -765,4 +741,65 @@ func sha256OfTestBody(t *testing.T, size int) []byte {
 	}
 	h.Write(b)
 	return h.Sum(nil)
+}
+
+// writeHoledFile builds the state an interrupted split transfer leaves behind:
+// a file of the full length whose every range but one was written, and a
+// checkpoint that records exactly those ranges.
+func writeHoledFile(t *testing.T, filename, url string, size, rangeSize, holeStart, holeEnd int64) {
+	t.Helper()
+	body := make([]byte, size)
+	for i := range body {
+		body[i] = byte(i)
+	}
+	for i := holeStart; i < holeEnd; i++ {
+		body[i] = 0xff // never written, and not what the server would send
+	}
+	if err := os.WriteFile(filename, body, 0666); err != nil {
+		t.Fatal(err)
+	}
+
+	head := grabtest.MustHTTPDoWithClose(grabtest.MustHTTPNewRequest("HEAD", url, nil))
+	complete := newRangeSet([2]int64{0, holeStart}, [2]int64{holeEnd, size})
+	c := newCheckpoint(filename, url, size, rangeSize, head.Header)
+	f, err := os.OpenFile(filename, os.O_WRONLY, 0666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.store(f, complete); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+// TestUnsplitTransferDiscardsHoledFile tests that a transfer which is not split
+// refuses to resume from the length of a file that a split transfer wrote out
+// of order. Such a file can already be full length while parts of it were
+// never written, so its length says nothing about which of its bytes are
+// valid, and only the checkpoint beside it marks it as written out of order.
+func TestUnsplitTransferDiscardsHoledFile(t *testing.T) {
+	const (
+		size      = 32768
+		rangeSize = 4096
+		holeStart = 2 * rangeSize
+		holeEnd   = 3 * rangeSize
+	)
+	filename := filepath.Join(t.TempDir(), "testUnsplitHole")
+
+	grabtest.WithTestServer(t, func(url string) {
+		writeHoledFile(t, filename, url, size, rangeSize, holeStart, holeEnd)
+
+		// RangeSize is unset, so this transfer would not have split the file,
+		// and no checksum is set to catch a resume that leaves the hole.
+		resp := mustDo(mustNewRequest(filename, url))
+		if resp.DidResume {
+			t.Error("expected Response.DidResume to be false")
+		}
+		testComplete(t, resp)
+	},
+		grabtest.ContentLength(size),
+	)
+
+	assertFileContents(t, filename, size)
+	assertNoCheckpoint(t, filename)
 }

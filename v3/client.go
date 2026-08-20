@@ -269,12 +269,14 @@ func (c *Client) validateLocal(resp *Response) stateFunc {
 		return c.headRequest
 	}
 
-	if resp.optionsKnown && resp.canSplit() && hasCheckpoint(resp.Filename) {
+	if resp.optionsKnown && hasCheckpoint(resp.Filename) {
 		// A split transfer writes ranges at their offset in the file, so the
 		// length of a partial file says nothing about which of its bytes are
 		// valid - a file whose last range completed is already full length.
 		// Its checkpoint is the authority on what has been downloaded,
-		// including on whether the transfer is already complete.
+		// including on whether the transfer is already complete. This holds
+		// however the transfer that finds the file is configured, as it is the
+		// transfer that wrote the file which decided the order.
 		return c.planTransfer
 	}
 
@@ -314,11 +316,19 @@ func (c *Client) planTransfer(resp *Response) stateFunc {
 		return c.planSplitTransfer(resp)
 	}
 
-	// A file left behind by a split transfer may have holes in it, so it is
-	// only safe to resume from the length of an existing file if this transfer
-	// would not have split it either.
+	// A file left behind by a split transfer may have holes in it, so its
+	// length says nothing about which of its bytes are valid and it cannot be
+	// resumed by an unsplit transfer. A checkpoint beside the file is what
+	// marks it as written out of order.
 	start := int64(0)
-	if resp.fi != nil && !resp.Request.NoResume && resp.CanResume &&
+	if hasCheckpoint(resp.Filename) {
+		// This transfer records nothing, so it starts over rather than trust a
+		// record it will not maintain, and discards that record so it cannot
+		// outlive the contents it describes.
+		if resp.err = removeCheckpoint(checkpointFilename(resp.Filename)); resp.err != nil {
+			return c.closeResponse
+		}
+	} else if resp.fi != nil && !resp.Request.NoResume && resp.CanResume &&
 		(resp.Size() < 0 || resp.fi.Size() < resp.Size()) {
 		// the remote file is either larger than the local copy, or of a size
 		// the server declined to tell us
