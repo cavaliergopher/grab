@@ -1,5 +1,11 @@
 GO = go
-STATICCHECK = honnef.co/go/tools/cmd/staticcheck@2025.1.1
+
+# staticcheck reads the export data of the toolchain it runs under, so each
+# release only understands the Go versions it shipped alongside. When a new Go
+# release breaks the vet target, bump this pin to the first staticcheck that
+# reads it, release candidate or not: 2026.2rc1 is the first to read Go 1.27.
+# Keep it in step with the staticcheck step in .github/workflows/test.yml.
+STATICCHECK = honnef.co/go/tools/cmd/staticcheck@2026.2rc1
 
 all: check
 
