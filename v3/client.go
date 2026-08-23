@@ -694,7 +694,15 @@ func closeWriter(resp *Response) error {
 
 // hasCheckpoint reports whether a checkpoint file accompanies the given
 // destination file.
+//
+// A transfer whose destination is not yet known has no checkpoint. Saying so
+// explicitly matters: an empty file name would otherwise name ".grab" in the
+// process working directory, and callers act on the answer by reading and
+// deleting that path.
 func hasCheckpoint(filename string) bool {
+	if filename == "" {
+		return false
+	}
 	_, err := os.Stat(checkpointFilename(filename))
 	return err == nil
 }

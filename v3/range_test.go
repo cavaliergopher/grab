@@ -922,3 +922,65 @@ func TestDurableUnsplitTransfer(t *testing.T) {
 	assertFileContents(t, filename, size)
 	assertNoCheckpoint(t, filename)
 }
+
+// chdir moves the process into dir for the duration of the test. The name a
+// checkpoint file takes when the destination has none is relative to the
+// working directory, which is the whole point of these tests.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// TestTransferWithoutFilenameKeepsWorkingDirectory tests that a transfer whose
+// destination file name is not yet known does not mistake ".grab" in the
+// process working directory for its own checkpoint.
+//
+// A destination directory leaves Response.Filename empty until the name is
+// resolved from the response, and a server that rejects HEAD reaches
+// planTransfer before that happens.
+func TestTransferWithoutFilenameKeepsWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	// an unrelated file that happens to be named like a checkpoint for a
+	// destination with no name
+	unrelated := checkpointFilename("")
+	if err := os.WriteFile(unrelated, []byte("not a checkpoint"), 0666); err != nil {
+		t.Fatal(err)
+	}
+
+	grabtest.WithTestServer(t, func(url string) {
+		// the destination is a directory, so Response.Filename starts empty
+		DefaultClient.Do(mustNewRequest(dir, url))
+	},
+		grabtest.ContentLength(1024),
+		grabtest.MethodWhitelist("GET"), // HEAD is rejected
+	)
+
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Errorf("expected %s to be left alone, got: %v", unrelated, err)
+	}
+}
+
+// TestHasCheckpointWithoutFilename tests the guard directly, as every caller
+// that reads or removes a checkpoint file depends on it.
+func TestHasCheckpointWithoutFilename(t *testing.T) {
+	chdir(t, t.TempDir())
+	if err := os.WriteFile(checkpointFilename(""), []byte("not a checkpoint"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	if hasCheckpoint("") {
+		t.Error("expected a transfer with no destination to have no checkpoint")
+	}
+}
