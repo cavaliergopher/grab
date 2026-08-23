@@ -2,6 +2,8 @@ package grab
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -438,4 +440,77 @@ func TestCheckpointIsDiscarded(t *testing.T) {
 			t.Error("expected no range set when no checkpoint exists")
 		}
 	})
+}
+
+// TestCheckpointStoreSyncsDirectory tests that the directory a checkpoint is
+// renamed into is flushed, so that the checkpoint is known to exist after a
+// crash, and that only the first store pays for it.
+func TestCheckpointStoreSyncsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	filename := filepath.Join(dir, "testCheckpointSyncDir")
+	f, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	c := newCheckpoint(filename, "http://example.com/f", 1024, 256, nil)
+
+	var synced []string
+	flushDir := c.flushDir
+	c.flushDir = func(name string) error {
+		synced = append(synced, name)
+		return flushDir(name) // still exercise the real flush
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := c.store(f, newRangeSet([2]int64{0, int64(256 * (i + 1))})); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// the first store flushes the directory; the later ones do not, as losing
+	// a newer checkpoint only reverts to an older one
+	if want := []string{dir}; fmt.Sprint(synced) != fmt.Sprint(want) {
+		t.Errorf("expected directories flushed %v, got: %v", want, synced)
+	}
+}
+
+// TestCheckpointStoreReportsDirectorySyncError tests that a directory which
+// cannot be flushed fails the store, rather than leaving a checkpoint reported
+// as written that may not survive a crash.
+func TestCheckpointStoreReportsDirectorySyncError(t *testing.T) {
+	dir := t.TempDir()
+	filename := filepath.Join(dir, "testCheckpointSyncErr")
+	f, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	expect := errors.New("TEST: cannot flush directory")
+	c := newCheckpoint(filename, "http://example.com/f", 1024, 256, nil)
+	c.flushDir = func(string) error { return expect }
+
+	if err := c.store(f, newRangeSet([2]int64{0, 256})); !errors.Is(err, expect) {
+		t.Errorf("expected error: %v, got: %v", expect, err)
+	}
+}
+
+// TestSyncDir tests that flushing a directory that exists succeeds. On Windows
+// it is a documented no-op.
+func TestSyncDir(t *testing.T) {
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// TestCheckpointFlushWithoutFunc tests that a checkpoint built without a
+// flushDir - as json.Unmarshal produces in loadCheckpoint - falls back to the
+// default rather than panicking.
+func TestCheckpointFlushWithoutFunc(t *testing.T) {
+	c := &checkpoint{filename: filepath.Join(t.TempDir(), "f.grab")}
+	if err := c.flush(); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
 }

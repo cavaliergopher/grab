@@ -142,6 +142,28 @@ type checkpoint struct {
 	// filename is the path of the checkpoint file itself, and is not part of
 	// the file format.
 	filename string
+
+	// synced records that the directory holding the checkpoint has been
+	// flushed, so that the checkpoint is known to exist after a crash.
+	synced bool
+
+	// flushDir flushes the directory the checkpoint is renamed into. It is a
+	// field, rather than a call to syncDir, so that tests can observe when it
+	// is called without sharing mutable state between them.
+	flushDir func(name string) error
+}
+
+// flush flushes the directory the checkpoint lives in, so that the entry
+// naming it survives a crash.
+//
+// A checkpoint decoded from disk carries no flushDir, as only a checkpoint
+// being written needs one, so the default stands in for it.
+func (c *checkpoint) flush() error {
+	flushDir := c.flushDir
+	if flushDir == nil {
+		flushDir = syncDir
+	}
+	return flushDir(filepath.Dir(c.filename))
 }
 
 // checkpointFilename returns the path of the checkpoint file that accompanies
@@ -161,6 +183,7 @@ func newCheckpoint(filename, url string, size, rangeSize int64, hdr http.Header)
 		LastModified: hdr.Get("Last-Modified"),
 		RangeSize:    rangeSize,
 		filename:     checkpointFilename(filename),
+		flushDir:     syncDir,
 	}
 }
 
@@ -267,6 +290,19 @@ func (c *checkpoint) store(dst *os.File, complete *rangeSet) error {
 	}
 	if err := os.Rename(tmp, c.filename); err != nil {
 		return fmt.Errorf("error renaming checkpoint file: %w", err)
+	}
+	if !c.synced {
+		// The rename is atomic, but the entry it makes in the directory is not
+		// durable until the directory is flushed. Only the first checkpoint
+		// needs this. Losing a later one reverts to an earlier one, which
+		// understates what was written and costs only a refetch; losing the
+		// first loses the only mark that the destination was written out of
+		// order at all, and a later transfer would take a partial file for a
+		// resumable or a finished one.
+		if err := c.flush(); err != nil {
+			return fmt.Errorf("error flushing checkpoint directory: %w", err)
+		}
+		c.synced = true
 	}
 	return nil
 }
