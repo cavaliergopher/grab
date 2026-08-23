@@ -3,9 +3,12 @@ package grab
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -69,17 +72,29 @@ type Response struct {
 	// capabilities of the remote server are known.
 	optionsKnown bool
 
-	// writer is the file handle used to write the downloaded file to local
-	// storage
-	writer io.Writer
+	// writer is the destination the downloaded file is written to
+	writer transferWriter
 
 	// storeBuffer receives the contents of the transfer if Request.NoStore is
 	// enabled.
-	storeBuffer bytes.Buffer
+	storeBuffer bufferAt
 
 	// bytesCompleted specifies the number of bytes which were already
 	// transferred before this transfer began.
 	bytesResumed int64
+
+	// ranges are the byte ranges of the remote file that this transfer must
+	// download, ordered from the start of the file.
+	ranges []byteRange
+
+	// complete are the ranges of the remote file that were already downloaded
+	// by an earlier, interrupted transfer, as recorded by checkpoint.
+	complete *rangeSet
+
+	// checkpoint records the ranges of a split transfer that have been written
+	// in full, so that it can be resumed. It is nil if the transfer is not
+	// split across several ranges.
+	checkpoint *checkpoint
 
 	// transfer is responsible for copying data from the remote server to a local
 	// file, tracking progress and allowing for cancelation.
@@ -228,6 +243,42 @@ func (c *Response) Bytes() ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// canSplit reports whether this transfer should be split into several ranges
+// downloaded separately.
+//
+// It requires a destination that can be written at an offset, a remote server
+// that has advertised support for Range requests, and a file large enough to
+// warrant more than one range.
+func (c *Response) canSplit() bool {
+	return c.Request.RangeSize > 0 &&
+		!c.Request.NoStore &&
+		c.CanResume &&
+		c.Size() > c.Request.RangeSize
+}
+
+// isPartialRequest reports whether the request that is about to be, or has just
+// been, sent asks for part of the remote file rather than all of it.
+func (c *Response) isPartialRequest() bool {
+	return c.Request.HTTPRequest.Header.Get("Range") != ""
+}
+
+// restartFromStart discards the transfer plan and starts over from the
+// beginning of the file, for a server that answered a Range request with the
+// whole file.
+func (c *Response) restartFromStart() error {
+	c.Request.HTTPRequest.Header.Del("Range")
+	c.ranges = []byteRange{{Start: 0, End: math.MaxInt64}}
+	c.complete = nil
+	c.DidResume = false
+	c.bytesResumed = 0
+	if c.checkpoint == nil {
+		return nil
+	}
+	err := c.checkpoint.remove()
+	c.checkpoint = nil
+	return err
+}
+
 func (c *Response) requestMethod() string {
 	if c == nil || c.HTTPResponse == nil || c.HTTPResponse.Request == nil {
 		return ""
@@ -241,13 +292,60 @@ func (c *Response) checksumUnsafe() ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	t := newTransfer(c.Request.Context(), nil, c.Request.hash, f, nil)
-	if _, err = t.copy(); err != nil {
+	if _, err = copyContext(c.Request.Context(), c.Request.hash, f, nil); err != nil {
 		return nil, err
 	}
 	sum := c.Request.hash.Sum(nil)
 	return sum, nil
 }
+
+// A bufferAt is an in-memory transferWriter, used when Request.NoStore is
+// enabled. It is addressed by offset like a file, so that a download held in
+// memory takes the same path through a transfer as one written to disk.
+type bufferAt struct {
+	mu sync.Mutex
+	b  []byte
+}
+
+func (w *bufferAt) WriteAt(p []byte, off int64) (n int, err error) {
+	if off < 0 {
+		return 0, errors.New("grab: negative write offset")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if end := off + int64(len(p)); end > int64(len(w.b)) {
+		if end > int64(cap(w.b)) {
+			b := make([]byte, end, end+end/4)
+			copy(b, w.b)
+			w.b = b
+		} else {
+			w.b = w.b[:end]
+		}
+	}
+	return copy(w.b[off:], p), nil
+}
+
+// Bytes returns the buffered contents. The caller must not modify them.
+func (w *bufferAt) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b
+}
+
+func (w *bufferAt) Truncate(size int64) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if size < int64(len(w.b)) {
+		w.b = w.b[:size]
+	}
+	return nil
+}
+
+// Sync is a no-op. Nothing is written to stable storage, which is why a
+// transfer to memory is never checkpointed.
+func (w *bufferAt) Sync() error { return nil }
+
+func (w *bufferAt) Close() error { return nil }
 
 func (c *Response) closeResponseBody() error {
 	if c.HTTPResponse == nil || c.HTTPResponse.Body == nil {

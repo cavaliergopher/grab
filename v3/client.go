@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,12 +24,6 @@ const DefaultUserAgent = "grab/3"
 // HTTPClient provides an interface allowing us to perform HTTP requests.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
-}
-
-// truncater is a private interface allowing different response
-// Writers to be truncated
-type truncater interface {
-	Truncate(size int64) error
 }
 
 // A Client is a file download client.
@@ -55,14 +49,29 @@ type Client struct {
 }
 
 // NewClient returns a new file download Client, using default configuration.
+//
+// The client is built on a copy of http.DefaultTransport, so it inherits the
+// standard library's connection, TLS handshake and idle connection timeouts.
+// Without them a request to a host that accepts a connection and then goes
+// silent hangs until the operating system gives up, which takes minutes.
 func NewClient() *Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+
+	// Request.Concurrency puts several requests to the same host in flight at
+	// once, and each of them releases its connection when its range is done.
+	// A released connection is handed straight to another request that is
+	// already waiting for one, but if none is waiting it goes to the idle pool
+	// instead - and at the default of two per host, the pool overflows and the
+	// connection is closed. The next range then has to pay for a new
+	// connection, and a TLS handshake, to replace one that was perfectly good.
+	//
+	// Idle connections remain bounded in total by MaxIdleConns, and are still
+	// reaped after IdleConnTimeout.
+	t.MaxIdleConnsPerHost = t.MaxIdleConns
+
 	return &Client{
-		UserAgent: DefaultUserAgent,
-		HTTPClient: &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		},
+		UserAgent:  DefaultUserAgent,
+		HTTPClient: &http.Client{Transport: t},
 	}
 }
 
@@ -266,6 +275,17 @@ func (c *Client) validateLocal(resp *Response) (stateFunc, error) {
 		return c.headRequest, nil
 	}
 
+	if resp.optionsKnown && hasCheckpoint(resp.Filename) {
+		// A split transfer writes ranges at their offset in the file, so the
+		// length of a partial file says nothing about which of its bytes are
+		// valid - a file whose last range completed is already full length.
+		// Its checkpoint is the authority on what has been downloaded,
+		// including on whether the transfer is already complete. This holds
+		// however the transfer that finds the file is configured, as it is the
+		// transfer that wrote the file which decided the order.
+		return c.planTransfer, nil
+	}
+
 	if expectedSize == resp.fi.Size() {
 		// local file matches remote file size - wrap it up
 		resp.DidResume = true
@@ -275,7 +295,7 @@ func (c *Client) validateLocal(resp *Response) (stateFunc, error) {
 
 	if resp.Request.NoResume {
 		// local file should be overwritten
-		return c.getRequest, nil
+		return c.planTransfer, nil
 	}
 
 	if expectedSize >= 0 && expectedSize < resp.fi.Size() {
@@ -284,15 +304,101 @@ func (c *Client) validateLocal(resp *Response) (stateFunc, error) {
 	}
 
 	if resp.CanResume {
-		// set resume range on GET request
-		resp.Request.HTTPRequest.Header.Set(
-			"Range",
-			fmt.Sprintf("bytes=%d-", resp.fi.Size()))
-		resp.DidResume = true
-		resp.bytesResumed = resp.fi.Size()
-		return c.getRequest, nil
+		return c.planTransfer, nil
 	}
 	return c.headRequest, nil
+}
+
+// planTransfer decides which byte ranges of the remote file this transfer must
+// download, and prepares the request for the first of them.
+//
+// Every transfer is a series of ranges. A transfer that is not split is the
+// single range covering everything that remains to be downloaded, which for a
+// fresh download of a file of unknown length is the whole file requested
+// without a Range header - exactly the request grab has always made.
+func (c *Client) planTransfer(resp *Response) (stateFunc, error) {
+	if resp.canSplit() {
+		return c.planSplitTransfer(resp)
+	}
+
+	// A file left behind by a split transfer may have holes in it, so its
+	// length says nothing about which of its bytes are valid and it cannot be
+	// resumed by an unsplit transfer. A checkpoint beside the file is what
+	// marks it as written out of order.
+	start := int64(0)
+	if hasCheckpoint(resp.Filename) {
+		// This transfer records nothing, so it starts over rather than trust a
+		// record it will not maintain, and discards that record so it cannot
+		// outlive the contents it describes.
+		if err := removeCheckpoint(checkpointFilename(resp.Filename)); err != nil {
+			return nil, err
+		}
+	} else if resp.fi != nil && !resp.Request.NoResume && resp.CanResume &&
+		(resp.Size() < 0 || resp.fi.Size() < resp.Size()) {
+		// the remote file is either larger than the local copy, or of a size
+		// the server declined to tell us
+		start = resp.fi.Size()
+		resp.DidResume = true
+		resp.bytesResumed = start
+	}
+	// The range runs to the end of the file, wherever that turns out to be.
+	// Asking for everything from an offset rather than up to the size the
+	// server last reported is both what grab has always done and the more
+	// robust request: if the remote file has grown in the meantime, the
+	// mismatch is caught rather than silently truncating the download.
+	resp.ranges = []byteRange{{Start: start, End: math.MaxInt64}}
+	setRangeHeader(resp.Request.HTTPRequest, resp.ranges[0], resp.Size())
+	return c.getRequest, nil
+}
+
+// planSplitTransfer plans a transfer of Request.RangeSize sized ranges,
+// resuming from a checkpoint if one describes this same transfer.
+func (c *Client) planSplitTransfer(resp *Response) (stateFunc, error) {
+	url := resp.Request.URL().String()
+	size, rangeSize := resp.Size(), resp.Request.RangeSize
+
+	if resp.Request.NoResume || !resp.Request.Durable {
+		// A transfer that records no progress has nothing to resume from, and
+		// must not leave the record of an earlier transfer beside a file it is
+		// about to overwrite.
+		if err := removeCheckpoint(checkpointFilename(resp.Filename)); err != nil {
+			return nil, err
+		}
+	} else if resp.fi != nil {
+		complete, err := loadCheckpoint(
+			resp.Filename, url, size, rangeSize, resp.HTTPResponse.Header)
+		if err != nil {
+			return nil, err
+		}
+		resp.complete = complete
+	}
+	if resp.complete == nil {
+		// Either there is no checkpoint or it describes a different transfer.
+		// Without one, nothing can be assumed about the contents of any
+		// existing file, so the transfer starts over.
+		resp.complete = &rangeSet{}
+	}
+
+	resp.ranges = resp.complete.missing(size, rangeSize)
+	if n := resp.complete.completedBytes(); n > 0 {
+		resp.DidResume = true
+		resp.bytesResumed = n
+	}
+	if len(resp.ranges) == 0 {
+		// The checkpoint accounts for every byte of the file, so the transfer
+		// is already complete and the record of it is of no further use. It
+		// has to go now: copyFile is what removes a checkpoint once its
+		// transfer finishes, and this transfer never reaches it.
+		if err := removeCheckpoint(checkpointFilename(resp.Filename)); err != nil {
+			return nil, err
+		}
+		return c.checksumFile, nil
+	}
+
+	resp.checkpoint = newCheckpoint(
+		resp.Filename, url, size, rangeSize, resp.HTTPResponse.Header)
+	setRangeHeader(resp.Request.HTTPRequest, resp.ranges[0], resp.Size())
+	return c.getRequest, nil
 }
 
 func (c *Client) checksumFile(resp *Response) (stateFunc, error) {
@@ -339,17 +445,23 @@ func (c *Client) doHTTPRequest(req *http.Request) (*http.Response, error) {
 
 func (c *Client) headRequest(resp *Response) (stateFunc, error) {
 	if resp.optionsKnown {
-		return c.getRequest, nil
+		return c.planTransfer, nil
 	}
 	resp.optionsKnown = true
 
-	if resp.Request.NoResume {
-		return c.getRequest, nil
-	}
+	// A transfer that may be split cannot plan its ranges until it knows the
+	// size of the remote file and whether the server supports Range requests,
+	// so it always asks. Otherwise the HEAD request is only an optimisation
+	// and is skipped whenever it would tell us nothing we need.
+	if resp.Request.RangeSize <= 0 || resp.Request.NoStore {
+		if resp.Request.NoResume {
+			return c.planTransfer, nil
+		}
 
-	if resp.Filename != "" && resp.fi == nil {
-		// destination path is already known and does not exist
-		return c.getRequest, nil
+		if resp.Filename != "" && resp.fi == nil {
+			// destination path is already known and does not exist
+			return c.planTransfer, nil
+		}
 	}
 
 	hreq := new(http.Request)
@@ -368,13 +480,13 @@ func (c *Client) headRequest(resp *Response) (stateFunc, error) {
 		if resp.ctx.Err() != nil {
 			return nil, err
 		}
-		return c.getRequest, nil
+		return c.planTransfer, nil
 	}
 	resp.HTTPResponse = hresp
 	resp.HTTPResponse.Body.Close()
 
 	if resp.HTTPResponse.StatusCode != http.StatusOK {
-		return c.getRequest, nil
+		return c.planTransfer, nil
 	}
 
 	// In case of redirects during HEAD, record the final URL and use it
@@ -395,12 +507,20 @@ func (c *Client) getRequest(resp *Response) (stateFunc, error) {
 	}
 	resp.HTTPResponse = hresp
 
-	// TODO: check Content-Range
-
 	// check status code
 	if !resp.Request.IgnoreBadStatusCodes {
 		if resp.HTTPResponse.StatusCode < 200 || resp.HTTPResponse.StatusCode > 299 {
 			return nil, StatusCodeError(resp.HTTPResponse.StatusCode)
+		}
+	}
+
+	if resp.HTTPResponse.StatusCode != http.StatusPartialContent && resp.isPartialRequest() {
+		// The server answered a Range request with the whole file, so the
+		// response begins at the start of the file rather than where the
+		// request asked it to. Nothing that was downloaded before can be kept,
+		// and the transfer cannot be split.
+		if err := resp.restartFromStart(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -412,14 +532,21 @@ func (c *Client) readResponse(resp *Response) (stateFunc, error) {
 		panic("grab: developer error: Response.HTTPResponse is nil")
 	}
 
-	// check expected size
-	resp.sizeUnsafe = resp.HTTPResponse.ContentLength
-	if resp.sizeUnsafe >= 0 {
-		// remote size is known
-		resp.sizeUnsafe += resp.bytesResumed
-		if resp.Request.Size > 0 && resp.Request.Size != resp.sizeUnsafe {
-			return nil, ErrBadLength
+	// Determine the total size of the remote file. A partial response reports
+	// it directly, which is both simpler and more reliable than adding the
+	// length of the response to the offset it started at.
+	if _, _, size, ok := parseContentRange(resp.HTTPResponse.Header.Get("Content-Range")); ok {
+		resp.sizeUnsafe = size
+	} else {
+		resp.sizeUnsafe = resp.HTTPResponse.ContentLength
+		if resp.sizeUnsafe >= 0 && len(resp.ranges) > 0 {
+			// remote size is known, and is relative to where this response
+			// begins in the file
+			resp.sizeUnsafe += resp.ranges[0].Start
 		}
+	}
+	if resp.sizeUnsafe >= 0 && resp.Request.Size > 0 && resp.Request.Size != resp.sizeUnsafe {
+		return nil, ErrBadLength
 	}
 
 	// check filename
@@ -432,7 +559,7 @@ func (c *Client) readResponse(resp *Response) (stateFunc, error) {
 		resp.Filename = filepath.Join(resp.Request.Filename, filename)
 	}
 
-	if !resp.Request.NoStore && resp.requestMethod() == "HEAD" {
+	if resp.requestMethod() == "HEAD" {
 		if resp.HTTPResponse.Header.Get("Accept-Ranges") == "bytes" {
 			resp.CanResume = true
 		}
@@ -441,10 +568,10 @@ func (c *Client) readResponse(resp *Response) (stateFunc, error) {
 	return c.openWriter, nil
 }
 
-// openWriter opens the destination file for writing and seeks to the location
-// from whence the file transfer will resume.
+// openWriter opens the destination the file transfer will be written to.
 //
-// Requires that Response.Filename and resp.DidResume are already be set.
+// Requires that Response.Filename, Response.ranges and Response.DidResume are
+// already set.
 func (c *Client) openWriter(resp *Response) (stateFunc, error) {
 	if !resp.Request.NoStore && !resp.Request.NoCreateDirectories {
 		if err := mkdirp(resp.Filename); err != nil {
@@ -452,49 +579,38 @@ func (c *Client) openWriter(resp *Response) (stateFunc, error) {
 		}
 	}
 
+	// file is the destination file, if the transfer is being stored, and is
+	// needed to flush it before each checkpoint.
+	var file *os.File
 	if resp.Request.NoStore {
 		resp.writer = &resp.storeBuffer
 	} else {
-		// compute write flags
-		flag := os.O_CREATE | os.O_WRONLY
-		if resp.fi != nil {
-			if resp.DidResume {
-				flag = os.O_APPEND | os.O_WRONLY
-			} else {
-				// truncate later in copyFile, if not cancelled
-				// by BeforeCopy hook
-				flag = os.O_WRONLY
-			}
-		}
-
-		// open file
-		f, err := os.OpenFile(resp.Filename, flag, 0666)
+		// Ranges are written at their offset in the file rather than
+		// sequentially, so the file is never opened for appending: that would
+		// force every write to the end of the file, whatever offset it was
+		// given. An existing file is truncated later in copyFile, if the
+		// BeforeCopy hook does not cancel the transfer first.
+		f, err := os.OpenFile(resp.Filename, os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
 			return nil, err
 		}
-		resp.writer = f
-
-		// seek to start or end
-		whence := io.SeekStart
-		if resp.bytesResumed > 0 {
-			whence = io.SeekEnd
-		}
-		if _, err := f.Seek(0, whence); err != nil {
-			return nil, err
-		}
+		resp.writer, file = f, f
 	}
 
 	// init transfer
 	if resp.bufferSize < 1 {
 		resp.bufferSize = 32 * 1024
 	}
-	b := make([]byte, resp.bufferSize)
-	resp.transfer = newTransfer(
-		resp.Request.Context(),
-		resp.Request.RateLimiter,
-		resp.writer,
-		resp.HTTPResponse.Body,
-		b)
+	var ckpt *checkpointer
+	if resp.checkpoint != nil && file != nil {
+		ckpt = newCheckpointer(resp.checkpoint, file, resp.complete, resp.Request.Durable)
+	}
+	resp.transfer = newTransfer(resp, c, resp.HTTPResponse.Body, ckpt)
+	if resp.Request.Durable && ckpt == nil && file != nil {
+		// A transfer that is not split has no checkpointer to flush the file
+		// for it, but Durable promises the same of both.
+		resp.transfer.flush = newFlusher(file)
+	}
 
 	// next step is copyFile, but this will be called later in another goroutine
 	return nil, nil
@@ -520,8 +636,10 @@ func (c *Client) copyFile(resp *Response) (stateFunc, error) {
 	// We waited to truncate the file in openWriter() to make sure
 	// the BeforeCopy didn't cancel the copy. If this was an existing
 	// file that is not going to be resumed, truncate the contents.
-	if t, ok := resp.writer.(truncater); ok && resp.fi != nil && !resp.DidResume {
-		t.Truncate(0)
+	if resp.fi != nil && !resp.DidResume {
+		if err := resp.writer.Truncate(0); err != nil {
+			return nil, err
+		}
 	}
 
 	bytesCopied, err := resp.transfer.copy()
@@ -530,6 +648,14 @@ func (c *Client) copyFile(resp *Response) (stateFunc, error) {
 	}
 	if err := closeWriter(resp); err != nil {
 		return nil, err
+	}
+
+	// The transfer is complete, so the record of which of its ranges were
+	// complete is no longer of any use.
+	if resp.checkpoint != nil {
+		if err := resp.checkpoint.remove(); err != nil {
+			return nil, err
+		}
 	}
 
 	// set file timestamp
@@ -565,11 +691,26 @@ func (c *Client) copyFile(resp *Response) (stateFunc, error) {
 // download as successful when none of it may have reached the disk.
 func closeWriter(resp *Response) error {
 	var err error
-	if closer, ok := resp.writer.(io.Closer); ok {
-		err = closer.Close()
+	if resp.writer != nil {
+		err = resp.writer.Close()
 	}
 	resp.writer = nil
 	return err
+}
+
+// hasCheckpoint reports whether a checkpoint file accompanies the given
+// destination file.
+//
+// A transfer whose destination is not yet known has no checkpoint. Saying so
+// explicitly matters: an empty file name would otherwise name ".grab" in the
+// process working directory, and callers act on the answer by reading and
+// deleting that path.
+func hasCheckpoint(filename string) bool {
+	if filename == "" {
+		return false
+	}
+	_, err := os.Stat(checkpointFilename(filename))
+	return err == nil
 }
 
 // close finalizes the Response
