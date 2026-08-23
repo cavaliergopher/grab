@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -48,6 +49,11 @@ func (b *byteSize) Set(s string) error {
 	}
 	if n < 0 {
 		return fmt.Errorf("size must not be negative: %q", s)
+	}
+	if n > math.MaxInt64/mult {
+		// the unit would carry the value past what an int64 holds, and
+		// wrapping would quietly turn a huge size into a negative one
+		return fmt.Errorf("size is too large: %q", s)
 	}
 	*b = byteSize(n * mult)
 	return nil
