@@ -385,7 +385,13 @@ func (c *Client) planSplitTransfer(resp *Response) (stateFunc, error) {
 		resp.bytesResumed = n
 	}
 	if len(resp.ranges) == 0 {
-		// the checkpoint accounts for every byte of the file
+		// The checkpoint accounts for every byte of the file, so the transfer
+		// is already complete and the record of it is of no further use. It
+		// has to go now: copyFile is what removes a checkpoint once its
+		// transfer finishes, and this transfer never reaches it.
+		if err := removeCheckpoint(checkpointFilename(resp.Filename)); err != nil {
+			return nil, err
+		}
 		return c.checksumFile, nil
 	}
 

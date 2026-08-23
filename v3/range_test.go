@@ -771,17 +771,70 @@ func writeHoledFile(t *testing.T, filename, url string, size, rangeSize, holeSta
 		t.Fatal(err)
 	}
 
+	storeCheckpoint(t, filename, url, size, rangeSize,
+		newRangeSet([2]int64{0, holeStart}, [2]int64{holeEnd, size}))
+}
+
+// storeCheckpoint writes a checkpoint beside an existing destination file,
+// recording the given ranges as complete, as an interrupted transfer would.
+func storeCheckpoint(t *testing.T, filename, url string, size, rangeSize int64, complete *rangeSet) {
+	t.Helper()
 	head := grabtest.MustHTTPDoWithClose(grabtest.MustHTTPNewRequest("HEAD", url, nil))
-	complete := newRangeSet([2]int64{0, holeStart}, [2]int64{holeEnd, size})
 	c := newCheckpoint(filename, url, size, rangeSize, head.Header)
 	f, err := os.OpenFile(filename, os.O_WRONLY, 0666)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close()
 	if err := c.store(f, complete); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+}
+
+// TestRangeTransferRemovesCompleteCheckpoint tests that a checkpoint which
+// already accounts for every byte of the file is removed, rather than left
+// beside a finished download to mark it as written out of order for good.
+func TestRangeTransferRemovesCompleteCheckpoint(t *testing.T) {
+	const (
+		size      = 32768
+		rangeSize = 4096
+	)
+	filename := filepath.Join(t.TempDir(), "testRangeCheckpointDone")
+
+	rec := &grabtest.RangeRecorder{}
+	grabtest.WithTestServer(t, func(url string) {
+		// the state a transfer cancelled as its last range landed leaves
+		// behind: a complete file, and a checkpoint that says so
+		body := make([]byte, size)
+		for i := range body {
+			body[i] = byte(i)
+		}
+		if err := os.WriteFile(filename, body, 0666); err != nil {
+			t.Fatal(err)
+		}
+		storeCheckpoint(t, filename, url, size, rangeSize, newRangeSet([2]int64{0, size}))
+
+		req := mustNewRequest(filename, url)
+		req.RangeSize = rangeSize
+		req.Durable = true
+		req.Concurrency = 4
+		req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
+		resp := mustDo(req)
+
+		if n := len(rec.Ranges()); n != 0 {
+			t.Errorf("expected no requests for a complete file, got: %d, %v", n, rec.Ranges())
+		}
+		if !resp.DidResume {
+			t.Error("expected Response.DidResume to be true")
+		}
+		testComplete(t, resp)
+	},
+		grabtest.ContentLength(size),
+		grabtest.RecordRanges(rec),
+	)
+
+	assertFileContents(t, filename, size)
+	assertNoCheckpoint(t, filename)
 }
 
 // TestUnsplitTransferDiscardsHoledFile tests that a transfer which is not split
