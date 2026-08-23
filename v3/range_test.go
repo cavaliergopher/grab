@@ -1037,3 +1037,55 @@ func TestHasCheckpointWithoutFilename(t *testing.T) {
 		t.Error("expected a transfer with no destination to have no checkpoint")
 	}
 }
+
+// TestRangeTransferTuningBounds tests that tuning values which cannot be
+// honoured leave the transfer unsplit rather than being taken literally, and
+// that a transfer splits only when RangeSize divides the file into more than
+// one range.
+//
+// Adapted from the negative chunk count covered by #102, whose separate
+// RangeRequestMinSize is not needed here: RangeSize is itself the floor, as a
+// file no larger than one range is never split.
+func TestRangeTransferTuningBounds(t *testing.T) {
+	const size = 32768
+	tests := []struct {
+		name        string
+		rangeSize   int64
+		concurrency int
+		expectSplit bool
+	}{
+		{name: "Defaults"},
+		{name: "NegativeRangeSize", rangeSize: -1},
+		{name: "ConcurrencyWithoutRangeSize", concurrency: 8},
+		{name: "RangeSizeLargerThanFile", rangeSize: size * 2, concurrency: 4},
+		{name: "RangeSizeEqualToFile", rangeSize: size},
+		{name: "NegativeConcurrency", rangeSize: 4096, concurrency: -1, expectSplit: true},
+		{name: "ZeroConcurrency", rangeSize: 4096, expectSplit: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "testRangeTuning")
+			rec := &grabtest.RangeRecorder{}
+			grabtest.WithTestServer(t, func(url string) {
+				req := mustNewRequest(filename, url)
+				req.RangeSize = test.rangeSize
+				req.Concurrency = test.concurrency
+				req.Durable = true
+				req.SetChecksum(sha256.New(), sha256OfTestBody(t, size), false)
+				testComplete(t, mustDo(req))
+			},
+				grabtest.ContentLength(size),
+				grabtest.RecordRanges(rec),
+			)
+
+			got := rec.Ranges()
+			if split := len(got) > 1; split != test.expectSplit {
+				t.Errorf("expected split: %v, got %d requests: %v",
+					test.expectSplit, len(got), got)
+			}
+			assertFileContents(t, filename, size)
+			assertNoCheckpoint(t, filename)
+		})
+	}
+}
