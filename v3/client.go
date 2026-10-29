@@ -347,6 +347,13 @@ func (c *Client) headRequest(resp *Response) (stateFunc, error) {
 		return c.getRequest, nil
 	}
 
+	// A HEAD probe only describes a bodyless GET. Reusing a request body
+	// here would consume and close it before the actual download request.
+	req := resp.Request.HTTPRequest
+	if req.Body != nil || (req.Method != "" && req.Method != http.MethodGet) {
+		return c.getRequest, nil
+	}
+
 	if resp.Filename != "" && resp.fi == nil {
 		// destination path is already known and does not exist
 		return c.getRequest, nil
