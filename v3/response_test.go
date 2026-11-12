@@ -115,3 +115,43 @@ func TestResponseBytes(t *testing.T) {
 		)
 	})
 }
+
+func TestResponseStatsEdgeCases(t *testing.T) {
+	t.Run("ZeroStartDuration", func(t *testing.T) {
+		resp := &Response{}
+		if d := resp.Duration(); d != 0 {
+			t.Errorf("expected duration 0 for zero start, got %v", d)
+		}
+	})
+
+	t.Run("BytesPerSecondZeroDuration", func(t *testing.T) {
+		done := make(chan struct{})
+		close(done)
+		resp := &Response{
+			Done:  done,
+			Start: time.Now(),
+			End:   time.Now(),
+		}
+		if bps := resp.BytesPerSecond(); bps != 0 {
+			t.Errorf("expected 0 bps for 0 duration, got %v", bps)
+		}
+	})
+
+	t.Run("ETAUnknownSize", func(t *testing.T) {
+		resp := &Response{
+			sizeUnsafe: -1,
+		}
+		if eta := resp.ETA(); !eta.IsZero() {
+			t.Errorf("expected zero ETA for unknown size, got %v", eta)
+		}
+	})
+
+	t.Run("ETAZeroOrNegativeBPS", func(t *testing.T) {
+		resp := &Response{
+			sizeUnsafe: 100,
+		}
+		if eta := resp.ETA(); !eta.IsZero() {
+			t.Errorf("expected zero ETA when BPS is 0, got %v", eta)
+		}
+	})
+}

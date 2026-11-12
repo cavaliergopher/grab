@@ -144,7 +144,10 @@ func (c *Response) BytesComplete() int64 {
 // complete, the average bytes/sec for the life of the download is returned.
 func (c *Response) BytesPerSecond() float64 {
 	if c.IsComplete() {
-		return float64(c.transfer.N()) / c.Duration().Seconds()
+		if secs := c.Duration().Seconds(); secs > 0 {
+			return float64(c.transfer.N()) / secs
+		}
+		return 0
 	}
 	return c.transfer.BPS()
 }
@@ -164,6 +167,9 @@ func (c *Response) Progress() float64 {
 // the transfer is complete, the duration will be between the start and end of
 // the completed transfer process.
 func (c *Response) Duration() time.Duration {
+	if c.Start.IsZero() {
+		return 0
+	}
 	if c.IsComplete() {
 		return c.End.Sub(c.Start)
 	}
@@ -180,11 +186,11 @@ func (c *Response) ETA() time.Time {
 	}
 	bt := c.BytesComplete()
 	bps := c.transfer.BPS()
-	if bps == 0 {
+	if bps <= 0 || c.Size() <= 0 || c.Size() < bt {
 		return time.Time{}
 	}
 	secs := float64(c.Size()-bt) / bps
-	return time.Now().Add(time.Duration(secs) * time.Second)
+	return time.Now().Add(time.Duration(secs * float64(time.Second)))
 }
 
 // Open blocks the calling goroutine until the underlying file transfer is
