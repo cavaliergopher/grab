@@ -412,6 +412,13 @@ func (c *Client) readResponse(resp *Response) (stateFunc, error) {
 		panic("grab: developer error: Response.HTTPResponse is nil")
 	}
 
+	if resp.requestMethod() == "GET" && resp.DidResume {
+		if resp.HTTPResponse.StatusCode != http.StatusPartialContent {
+			resp.DidResume = false
+			resp.bytesResumed = 0
+		}
+	}
+
 	// check expected size
 	resp.sizeUnsafe = resp.HTTPResponse.ContentLength
 	if resp.sizeUnsafe >= 0 {

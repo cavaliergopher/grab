@@ -127,7 +127,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// send header and status code
-	w.WriteHeader(h.statusCodeFunc(r))
+	code := h.statusCodeFunc(r)
+	if code == http.StatusOK && h.acceptRanges && r.Header.Get("Range") != "" {
+		code = http.StatusPartialContent
+		w.Header().Set(
+			"Content-Range",
+			fmt.Sprintf("bytes %d-%d/%d", offset, h.contentLength-1, h.contentLength),
+		)
+	}
+	w.WriteHeader(code)
 
 	// send body
 	if r.Method == "GET" {

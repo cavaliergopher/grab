@@ -318,6 +318,65 @@ func TestAutoResume(t *testing.T) {
 	// TODO: test when existing file is corrupted
 }
 
+func TestResumeFallsBackToFullWhenServerReturns200OK(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "testResume200OK")
+	partial := make([]byte, 100)
+	for i := range partial {
+		partial[i] = 0xAA
+	}
+	if err := os.WriteFile(filename, partial, 0666); err != nil {
+		t.Fatal(err)
+	}
+
+	size := 512
+	fullBytes := make([]byte, size)
+	for i := 0; i < size; i++ {
+		fullBytes[i] = byte(i)
+	}
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+		if r.Method == "HEAD" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Server returns 200 OK with the full content, ignoring any Range header
+		w.WriteHeader(http.StatusOK)
+		w.Write(fullBytes)
+	}))
+	defer s.Close()
+
+	req := mustNewRequest(filename, s.URL)
+	h := sha256.New()
+	h.Write(fullBytes)
+	req.SetChecksum(sha256.New(), h.Sum(nil), true)
+
+	resp := mustDo(req)
+	testComplete(t, resp)
+
+	if resp.DidResume {
+		t.Errorf("expected Response.DidResume to be false when server returned 200 OK")
+	}
+	if resp.BytesComplete() != int64(size) {
+		t.Errorf("expected BytesComplete %d, got %d", size, resp.BytesComplete())
+	}
+	fi, err := os.Stat(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() != int64(size) {
+		t.Errorf("expected file size %d, got %d (file corrupted or appended)", size, fi.Size())
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, fullBytes) {
+		t.Errorf("downloaded file contents do not match expected full file")
+	}
+}
+
 func TestSkipExisting(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "testSkipExisting")
 
